@@ -19,6 +19,8 @@ if __name__ == '__main__':
         'the AI Clinician RL technique.'))
     parser.add_argument('data', type=str,
                         help='Model data directory (should contain train and test directories)')
+    parser.add_argument('--worker-label', dest='worker_label', type=str, default='',
+                        help='Label to suffix output files')
     parser.add_argument('--val-size', dest='val_size', type=float, default=0.2,
                         help='Proportion of data to use for validation')
     parser.add_argument('--n-models', dest='n_models', type=int, default=100,
@@ -39,7 +41,10 @@ if __name__ == '__main__':
                         help='Decay for reward values (default 0.99)')
     parser.add_argument('--soften-factor', dest='soften_factor', type=float, default=0.01,
                         help='Amount by which to soften factors (random actions will be chosen this proportion of the time)')
-
+    parser.add_argument('--num-iter-ql', dest='num_iter_ql', type=int, default=6,
+                        help='Number of bootstrappings to use for TD learning (physician policy)')
+    parser.add_argument('--num-iter-wis', dest='num_iter_wis', type=int, default=750,
+                        help='Number of bootstrappings to use for WIS estimation (AI policy)')
     args = parser.parse_args()
     
     n_cluster_states = args.n_cluster_states
@@ -53,7 +58,7 @@ if __name__ == '__main__':
     out_dir = os.path.join(data_dir, "models")
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
-    model_specs_dir = os.path.join(out_dir, "model_params")
+    model_specs_dir = os.path.join(out_dir, "model_params{}".format('_' + args.worker_label if args.worker_label else ''))
     if os.path.exists(model_specs_dir):
         shutil.rmtree(model_specs_dir)
     os.mkdir(model_specs_dir)
@@ -139,7 +144,9 @@ if __name__ == '__main__':
             physpol,
             n_cluster_states,
             soften_factor=args.soften_factor,
-            gamma=args.gamma
+            gamma=args.gamma,
+            num_iter_ql=args.num_iter_ql,
+            num_iter_wis=args.num_iter_wis
         )
 
         model_stats['train_bootql_mean'] = np.nanmean(train_bootql)
@@ -171,7 +178,9 @@ if __name__ == '__main__':
             physpol,
             n_cluster_states,
             soften_factor=args.soften_factor,
-            gamma=args.gamma
+            gamma=args.gamma,
+            num_iter_ql=args.num_iter_ql,
+            num_iter_wis=args.num_iter_wis
         )
 
         model_stats['val_bootql_0.95'] = np.quantile(val_bootql, 0.95)   #PHYSICIANS' 95# UB
@@ -201,7 +210,7 @@ if __name__ == '__main__':
                 'physician_policy': physpol,
                 'T': transitionr,
                 'R': R,
-                'cluster_centers': np.asarray(clusterer.cluster_centers_, dtype=np.float64),
+                'clusterer': clusterer,
                 'train_ids': train_ids,
                 'val_ids': val_ids,
                 'train_bootql': train_bootql,
@@ -216,5 +225,6 @@ if __name__ == '__main__':
                 pickle.dump(model_data, file)
 
     all_model_stats = pd.DataFrame(all_model_stats)
-    all_model_stats.to_csv(os.path.join(out_dir, "model_stats.csv"), float_format='%.6f')
+    all_model_stats.to_csv(os.path.join(out_dir, "model_stats{}.csv".format('_' + args.worker_label if args.worker_label else '')),
+                           float_format='%.6f')
     print('Done.')
