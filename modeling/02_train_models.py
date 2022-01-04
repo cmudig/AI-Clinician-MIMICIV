@@ -21,6 +21,8 @@ if __name__ == '__main__':
                         help='Model data directory (should contain train and test directories)')
     parser.add_argument('--worker-label', dest='worker_label', type=str, default='',
                         help='Label to suffix output files')
+    parser.add_argument('--save', dest='save_behavior', type=str, default='best',
+                        help='Models to save (best [default], all, none)')
     parser.add_argument('--val-size', dest='val_size', type=float, default=0.2,
                         help='Proportion of data to use for validation')
     parser.add_argument('--n-models', dest='n_models', type=int, default=100,
@@ -50,6 +52,7 @@ if __name__ == '__main__':
     n_cluster_states = args.n_cluster_states
     n_states = n_cluster_states + 2 # discharge and death are absorbing states
     absorbing_states = [n_cluster_states + 1, n_cluster_states] # absorbing state numbers
+    rewards = [args.reward, -args.reward]
 
     n_action_bins = args.n_action_bins
     n_actions = n_action_bins * n_action_bins # for both vasopressors and fluids
@@ -70,7 +73,7 @@ if __name__ == '__main__':
     
     # Bin vasopressor and fluid actions
     print("Create actions")    
-    all_actions, action_bins, transform_actions = fit_action_bins(
+    all_actions, action_medians, action_bins = fit_action_bins(
         MIMICraw[C_INPUT_STEP],
         MIMICraw[C_MAX_DOSE_VASO],
         n_action_bins=n_action_bins
@@ -119,7 +122,7 @@ if __name__ == '__main__':
             actions_train,
             outcomes_train,
             absorbing_states,
-            [args.reward, -args.reward]
+            rewards
         )
         
         ####### BUILD MODEL ########
@@ -169,7 +172,7 @@ if __name__ == '__main__':
             actions_val,
             outcomes_val,
             absorbing_states,
-            [args.reward, -args.reward]
+            rewards
         )
         
         val_bootql, val_bootwis = evaluate_policy(
@@ -195,14 +198,24 @@ if __name__ == '__main__':
         
         all_model_stats.append(model_stats)
         
-        if wis_95lb > max_wis_lb or wis_95lb < min_wis_lb:
-            best = wis_95lb > max_wis_lb
-            if best:
-                max_wis_lb = wis_95lb
-            if wis_95lb < min_wis_lb:
-                min_wis_lb = wis_95lb
-                
-            print("Saving model - {} so far".format('best' if best else 'worst'))
+        best = False
+        worst = False
+        if wis_95lb > max_wis_lb:
+            best = True
+            max_wis_lb = wis_95lb
+        if wis_95lb < min_wis_lb:
+            worst = True
+            min_wis_lb = wis_95lb
+        
+        save_name = None
+        if args.save_behavior == 'best' and best:
+            save_name = 'best_model'
+        elif args.save_behavior == 'best' and worst:
+            save_name = 'worst_model'
+        elif args.save_behavior == 'all':
+            save_name = 'model_' + str(modl)
+        if save_name:
+            print("Saving model:", save_name)
             model_data = {
                 'model_num': modl,
                 'Qon': Q,
@@ -216,11 +229,16 @@ if __name__ == '__main__':
                 'train_bootql': train_bootql,
                 'train_bootwis': train_bootwis,
                 'val_bootql': val_bootql,
-                'val_bootwis': val_bootwis
+                'val_bootwis': val_bootwis,
+                'action_medians': action_medians,
+                'action_bins': action_bins,
+                'n_cluster_states': n_cluster_states,
+                'absorbing_states': absorbing_states,
+                'rewards': rewards
             }
             save_path = os.path.join(
                 model_specs_dir,
-                '{}_model.pkl'.format('best' if best else 'worst'))
+                '{}.pkl'.format(save_name))
             with open(save_path, 'wb') as file:
                 pickle.dump(model_data, file)
 

@@ -32,8 +32,8 @@ def fit_action_bins(input_amounts, vaso_doses, n_action_bins=5):
     
     Returns: an assignment of each patient step (same length as input_amounts 
         and vaso_doses) to an action number; a tuple of the median values of
-        input and vaso for each bin; and a function that converts new input and
-        vaso values to action numbers.
+        input and vaso for each bin; and a tuple of the bin boundaries for each
+        bin that can be used in transform_actions.
     """
     bin_percentiles = np.linspace(0, 100, n_action_bins - 1, endpoint=False)
 
@@ -55,17 +55,23 @@ def fit_action_bins(input_amounts, vaso_doses, n_action_bins=5):
     ]
     
     med = np.array([io, vc])
-    _, _, actions = np.unique(med, axis=1, return_index=True, return_inverse=True)
+    actions = (med[0] - 1) * n_action_bins + (med[1] - 1)
+        
+    return actions, (median_inputs, median_vaso), (input_cutoffs, vaso_cutoffs)
     
-    # Create transform function
-    def transform(inputs, vasos):
-        return (
-            np.digitize(inputs, input_cutoffs),
-            np.digitize(vasos, vaso_cutoffs)
-        )
-    
-    return actions, (median_inputs, median_vaso), transform
-    
+def transform_actions(input_amounts, vaso_doses, cutoffs):
+    """
+    Transforms a set of continuous fluid and vasopressor actions into discrete
+    bins using the given set of cutoffs. The cutoffs are a tuple of bin
+    boundaries for fluids and vasopressors, such as those produced by the last
+    return value of fit_action_bins.
+    """
+    input_cutoffs, vaso_cutoffs = cutoffs
+    return (
+        len(input_cutoffs) * (np.digitize(input_amounts, input_cutoffs) - 1) +
+        (np.digitize(vaso_doses, vaso_cutoffs) - 1)
+    )
+
 def build_complete_record_sequences(blocs, stay_ids, states, actions, outcomes, absorbing_states, reward_values):
     """
     Builds a dataframe of timestepped records, adding a bloc at the end of each
@@ -93,7 +99,7 @@ def build_complete_record_sequences(blocs, stay_ids, states, actions, outcomes, 
             })
     return pd.DataFrame(qldata3)
 
-def _compute_transition_counts(qldata3, n_states, n_actions, transition_threshold=None):
+def compute_transition_counts(qldata3, n_states, n_actions, transition_threshold=None):
     """
     qldata3: Dataframe of blocs, states, actions, and outcomes
     n_states: Number of states (including both clustered states and absorbing states)
@@ -134,7 +140,7 @@ def compute_optimal_policy(qldata3, n_states, n_actions, absorbing_states, rewar
     """
     
     # Average transition counts over S, A
-    transitionr = _compute_transition_counts(qldata3,
+    transitionr = compute_transition_counts(qldata3,
                                              n_states,
                                              n_actions,
                                              transition_threshold=transition_threshold)
@@ -165,7 +171,7 @@ def compute_optimal_policy(qldata3, n_states, n_actions, absorbing_states, rewar
     
     return Q, physpol, transitionr, R
 
-def _build_record_sequences_with_policies(qldata3, predicted_actions, physpol, n_cluster_states, soften_factor=0.01):
+def build_record_sequences_with_policies(qldata3, predicted_actions, physpol, n_cluster_states, soften_factor=0.01):
     """
     Creates a copy of the given qldata3 containing softened physician and model
     actions, as well as the optimal predicted action for the state.
@@ -283,7 +289,7 @@ def offpolicy_eval_wis( qldata3,gamma ,num_iter):
 
     return bootwis, num_nonzero_rhos, individual_trial_estimators
 
-def evaluate_policy(qldata3, predicted_actions, physpol, n_cluster_states, soften_factor=0.1, gamma=0.99, num_iter_ql=6, num_iter_wis=750):
+def evaluate_policy(qldata3, predicted_actions, physpol, n_cluster_states, soften_factor=0.01, gamma=0.99, num_iter_ql=6, num_iter_wis=750):
     """
     Evaluates a policy using two off-policy evaluation methods on the given set
     of patient trajectories.
@@ -299,7 +305,7 @@ def evaluate_policy(qldata3, predicted_actions, physpol, n_cluster_states, softe
     Returns: Bootstrapped CIs for TD-learning and WIS.
     """
 
-    qldata3 = _build_record_sequences_with_policies(
+    qldata3 = build_record_sequences_with_policies(
         qldata3,
         predicted_actions,
         physpol,
