@@ -88,7 +88,8 @@ def main():
         'pass the identifier of the table (e.g. `project-name.dataset_name.table_name`) '
         'as the second parameter to this script.'))
     parser.add_argument('secret', type=str, help='Path to BigQuery client secret')
-    parser.add_argument('elixhauser', type=str, help='BigQuery table identifier for the elixhauser_quan table (should be pre-generated using the sql/elixhauser.sql script)')
+    parser.add_argument('gcp_project', type=str, help='Name of the project within GCP that will be authenticated')
+    parser.add_argument('elixhauser', type=str, help='BigQuery table identifier for the elixhauser_quan table (pre-generate this using the sql/elixhauser.sql script)')
     parser.add_argument('--out', dest='output_dir', type=str, default=None,
                         help='Directory in which to output (default is data directory)')
     parser.add_argument('--skip-existing', dest='skip_existing', action='store_true', default=False,
@@ -106,7 +107,7 @@ def main():
         appflow.run_local_server()
     else:
         appflow.run_console()
-    project = 'ai-clinician'
+    project = args.gcp_project
     credentials = appflow.credentials
     bq_client = bigquery.Client(project=project, credentials=credentials)
 
