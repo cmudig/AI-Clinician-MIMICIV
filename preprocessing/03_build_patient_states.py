@@ -4,8 +4,8 @@ import os
 import argparse
 from tqdm import tqdm
 import time
-from .columns import *
-from .utils import load_csv, load_intermediate_or_raw_csv
+from preprocessing.columns import *
+from preprocessing.utils import load_csv, load_intermediate_or_raw_csv
 
 class ChartEvents:
     """

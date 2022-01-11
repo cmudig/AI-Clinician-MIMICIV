@@ -3,29 +3,40 @@ import numpy as np
 import os
 import argparse
 from tqdm import tqdm
-from .columns import *
-from .utils import load_csv
-from .imputation import fixgaps, knn_impute
-from .derived_features import compute_pao2_fio2, compute_shock_index, compute_sofa, compute_sirs
+from preprocessing.columns import *
+from preprocessing.provenance import ProvenanceWriter
+from preprocessing.utils import load_csv
+from preprocessing.imputation import fixgaps, knn_impute
+from preprocessing.derived_features import compute_pao2_fio2, compute_shock_index, compute_sofa, compute_sirs
 
-def correct_features(df):
+def correct_features(df, provenance=None):
     # CORRECT GENDER
     df[C_GENDER] = df[C_GENDER] - 1
 
     # CORRECT AGE > 200 yo
     ii = df[C_AGE] > 150
+    if provenance:
+        provenance.record("clamp age", row=df.loc[ii].index, col=C_AGE)
     df.loc[ii, C_AGE] = 91
 
     # FIX MECHVENT
+    if provenance:
+        provenance.record("replace NaN mechvent", row=df.loc[pd.isna(df[C_MECHVENT])].index, col=C_MECHVENT)
     df.loc[pd.isna(df[C_MECHVENT]), C_MECHVENT] = 0
     df.loc[df[C_MECHVENT] > 0, C_MECHVENT] = 1
 
     # FIX Elixhauser missing values
+    if provenance:
+        provenance.record("replace NaN elixhauser with median", row=df.loc[pd.isna(df[C_ELIXHAUSER])].index, col=C_MECHVENT)
     df.loc[pd.isna(df[C_ELIXHAUSER]), C_ELIXHAUSER] = np.nanmedian(
         df[C_ELIXHAUSER])  # use the median value / only a few missing data points
 
     # vasopressors / no NAN
+    if provenance:
+        provenance.record("zero NaN median dose vaso", row=df.loc[pd.isna(df[C_MEDIAN_DOSE_VASO])].index, col=C_MEDIAN_DOSE_VASO)
     df.loc[pd.isna(df[C_MEDIAN_DOSE_VASO]), C_MEDIAN_DOSE_VASO] = 0
+    if provenance:
+        provenance.record("zero NaN max dose vaso", row=df.loc[pd.isna(df[C_MAX_DOSE_VASO])].index, col=C_MAX_DOSE_VASO)
     df.loc[pd.isna(df[C_MAX_DOSE_VASO]), C_MAX_DOSE_VASO] = 0
     
     return df    
@@ -54,7 +65,9 @@ if __name__ == '__main__':
                         help="Don't compute PaO2/FiO2, shock index, SOFA, SIRS")
     parser.add_argument('--mask-file', dest='mask_file', default=None, type=str,
                         help="Path to write a mask file indicating where values were changed (+1 if a value was added or changed, or -1 if a value was removed)")
-    
+    parser.add_argument('--provenance-dir', dest='provenance_dir', default=None, type=str,
+                        help="Path to directory in which to write provenance files (indicating sources and reasons for all changes)")
+
     args = parser.parse_args()
     base_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     data_dir = args.data_dir or os.path.join(base_path, 'data')
@@ -62,20 +75,25 @@ if __name__ == '__main__':
     df = load_csv(args.input)
     old_df = df.copy() if args.mask_file else None
     
+    provenance = ProvenanceWriter(args.provenance_dir, verbose=True) if args.provenance_dir else None
+    
     if args.correct_features:
         print("Correcting features")
-        df = correct_features(df)
+        df = correct_features(df, provenance=provenance)
 
     if args.interpolation:
         miss = pd.isna(df).sum() / len(df)
         impute_columns = (miss > 0) & (miss < 0.05)  # less than 5# missingness
         for col in df.loc[:,impute_columns].columns:
             print("Linear interpolation on", col)
-            df[col] = fixgaps(df[col])
+            new_vals = fixgaps(df[col])
+            if provenance:
+                provenance.record("linear interpolation", row=(df[col] != new_vals).index, col=col)
+            df[col] = new_vals
     
     if args.knn:
         knn_cols = CHART_FIELD_NAMES + LAB_FIELD_NAMES
-        df[knn_cols] = knn_impute(df[knn_cols], na_threshold=0.9)
+        df[knn_cols] = knn_impute(df[knn_cols], na_threshold=0.9, provenance=provenance)
 
     if args.computed_features:
         print("Computing P/F")
@@ -89,6 +107,9 @@ if __name__ == '__main__':
 
     print("Write")
     df.to_csv(args.output, index=False, float_format='%g')
+    
+    if provenance:
+        provenance.close()
     
     if args.mask_file:
         print("Write mask file")

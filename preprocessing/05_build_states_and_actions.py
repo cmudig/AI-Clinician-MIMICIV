@@ -153,7 +153,7 @@ def build_states_and_actions(df, qstime, inputMV, inputpreadm, vasoMV, demog, UO
             combined_data.append(item)
 
     result = pd.DataFrame(combined_data)
-    expected_columns = DEMOGRAPHICS_FIELD_NAMES + CHART_FIELD_NAMES + LAB_FIELD_NAMES + IO_FIELD_NAMES + COMPUTED_FIELD_NAMES
+    expected_columns = DEMOGRAPHICS_FIELD_NAMES + SAH_FIELD_NAMES + IO_FIELD_NAMES + COMPUTED_FIELD_NAMES
     for col in expected_columns:
         if col not in result.columns:
             print("Adding empty column '{}' (no data points)".format(col))
