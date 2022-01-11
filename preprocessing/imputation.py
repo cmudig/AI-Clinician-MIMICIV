@@ -223,10 +223,13 @@ def nearest_neighbor_impute(X, metric='nan_euclidean', provenance=None, n_jobs=N
             shown_warning = True
         # distances, neighbors = nn.kneighbors(test_distances, n_neighbors=1)
         neighbors = non_nan_indexes[neighbors]
-        print(col_nan_positions[:10])
         Xc.loc[col_nan_positions, col_name] = X[col_name].values[neighbors]
         if provenance and (exclude_from_provenance is None or col_name not in exclude_from_provenance):
-            provenance.record("KNN imputation", row=col_nan_positions, col=col_name, metadata=distances, reference_row=neighbors)
+            provenance.record("KNN imputation",
+                              row=np.where(col_nan_positions)[0],
+                              col=col_name,
+                              metadata=distances,
+                              reference_row=neighbors)
         if return_distances:
             D[col_nan_positions, col] = distances
     if return_distances: return Xc, D
@@ -250,9 +253,9 @@ def knn_impute(data, batch_size=10000, na_threshold=1, provenance=None):
         # indexes_whole are indexes in the full dataframe of columns with nan 
         # rate less than na_threshold
         indexes_whole = pd.isna(data.loc[start_idx:end_idx]).mean(axis=0) <= na_threshold
-        # indexes_sub are indexes in the missNotAll columns with nan rate less
+        # indexes_sub are columns in the missNotAll columns with nan rate less
         # than na_threshold
-        indexes_sub = [i for i, col in enumerate(data.columns[missNotAll]) if pd.isna(data.loc[start_idx:end_idx, col]).mean() <= na_threshold]
+        indexes_sub = [col for col in data.columns[missNotAll] if pd.isna(data.loc[start_idx:end_idx, col]).mean() <= na_threshold]
         # exclude_col_names are the names of the columns with nan rate more than 
         # na_threshold, which should be excluded
         exclude_col_names = set([col for col in data.columns[missNotAll] if pd.isna(data.loc[start_idx:end_idx, col]).mean() > na_threshold])
@@ -261,7 +264,7 @@ def knn_impute(data, batch_size=10000, na_threshold=1, provenance=None):
         data.loc[start_idx:end_idx, indexes_whole] = nearest_neighbor_impute(data.loc[start_idx:end_idx, missNotAll],
                                                                              provenance=provenance,
                                                                              n_jobs=4,
-                                                                             exclude_from_provenance=exclude_col_names)[:,indexes_sub]
+                                                                             exclude_from_provenance=exclude_col_names)[indexes_sub]
 
     return data
 
