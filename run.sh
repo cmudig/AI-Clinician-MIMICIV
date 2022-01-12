@@ -10,7 +10,7 @@ if [ "$command" = "extract" ]; then
   echo "Using elixhauser quan table: $4"
   echo
 
-  python data_extraction/extract.py $2 $3
+  python data_extraction/extract.py $2 $3 $4
 
   echo "DONE"
 
