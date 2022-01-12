@@ -197,7 +197,7 @@ def fixgaps(x):
     y[bd] = interp1d(gd,x.loc[gd])(x.index[bd].tolist())
     return y
 
-def nearest_neighbor_impute(X, metric='nan_euclidean', provenance=None, n_jobs=None, return_distances=False, exclude_from_provenance=None):
+def nearest_neighbor_impute(X, metric='nan_euclidean', provenance=None, n_jobs=None, return_distances=False, exclude_from_provenance=None, provenance_row_offset=0):
     Xc = X.copy()
     X_vals = X.values
     if return_distances:
@@ -226,10 +226,10 @@ def nearest_neighbor_impute(X, metric='nan_euclidean', provenance=None, n_jobs=N
         Xc.loc[col_nan_positions, col_name] = X[col_name].values[neighbors]
         if provenance and (exclude_from_provenance is None or col_name not in exclude_from_provenance):
             provenance.record("KNN imputation",
-                              row=np.where(col_nan_positions)[0],
+                              row=np.where(col_nan_positions)[0] + provenance_row_offset,
                               col=col_name,
-                              metadata=distances,
-                              reference_row=neighbors)
+                              metadata=np.around(distances, decimals=4),
+                              reference_row=neighbors + provenance_row_offset)
         if return_distances:
             D[col_nan_positions, col] = distances
     if return_distances: return Xc, D
@@ -264,6 +264,7 @@ def knn_impute(data, batch_size=10000, na_threshold=1, provenance=None):
         data.loc[start_idx:end_idx, indexes_whole] = nearest_neighbor_impute(data.loc[start_idx:end_idx, missNotAll],
                                                                              provenance=provenance,
                                                                              n_jobs=4,
+                                                                             provenance_row_offset=start_idx,
                                                                              exclude_from_provenance=exclude_col_names)[indexes_sub]
 
     return data
