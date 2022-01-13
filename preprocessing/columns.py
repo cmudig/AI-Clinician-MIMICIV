@@ -151,14 +151,62 @@ C_RATE = "rate"
 C_TEV = "tev"
 C_RATESTD = "ratestd"
 C_DATEDIFF_MINUTES = "datediff_minutes"
+C_GSN = "gsn"
+C_NDC = "ndc"
+C_DOSE_VAL = "dose_val"
+C_TEST_ITEMID = "test_itemid"
+C_SPEC_ITEMID = "spec_itemid"
+C_AB_ITEMID = "ab_itemid"
+C_INTERPRETATION = "interpretation"
+
+# Comorbidities
+C_CONGESTIVE_HEART_FAILURE = "congestive_heart_failure"
+C_CARDIAC_ARRHYTHMIAS = "cardiac_arrhythmias"
+C_VALVULAR_DISEASE = "valvular_disease",
+C_PULMONARY_CIRCULATION = "pulmonary_circulation"
+C_PERIPHERAL_VASCULAR = "peripheral_vascular"
+C_HYPERTENSION = "hypertension"
+C_PARALYSIS = "paralysis",
+C_OTHER_NEUROLOGICAL = "other_neurological"
+C_CHRONIC_PULMONARY = "chronic_pulmonary"
+C_DIABETES_UNCOMPLICATED = "diabetes_uncomplicated",
+C_DIABETES_COMPLICATED = "diabetes_complicated"
+C_HYPOTHYROIDISM = "hypothyroidism"
+C_RENAL_FAILURE = "renal_failure"
+C_LIVER_DISEASE = "liver_disease",
+C_PEPTIC_ULCER = "peptic_ulcer"
+C_AIDS = "aids"
+C_LYMPHOMA = "lymphoma"
+C_METASTATIC_CANCER = "metastatic_cancer"
+C_SOLID_TUMOR = "solid_tumor",
+C_RHEUMATOID_ARTHRITIS = "rheumatoid_arthritis"
+C_COAGULOPATHY = "coagulopathy"
+C_OBESITY = "obesity"
+C_WEIGHT_LOSS = "weight_loss",
+C_FLUID_ELECTROLYTE = "fluid_electrolyte"
+C_BLOOD_LOSS_ANEMIA = "blood_loss_anemia"
+C_DEFICIENCY_ANEMIAS = "deficiency_anemias"
+C_ALCOHOL_ABUSE = "alcohol_abuse",
+C_DRUG_ABUSE = "drug_abuse"
+C_PSYCHOSES = "psychoses"
+C_DEPRESSION = "depression"
 
 # Additional computed fields on raw data
 C_NORM_INFUSION_RATE = "norm_infusion_rate"
 
 RAW_DATA_COLUMNS = {
-    "abx": [C_HADM_ID, C_ICUSTAYID, C_STARTDATE, C_ENDDATE],
+    "abx": [C_HADM_ID, C_ICUSTAYID, C_STARTDATE, C_ENDDATE, C_GSN, C_NDC, C_DOSE_VAL],
     "culture": [C_SUBJECT_ID, C_HADM_ID, C_ICUSTAYID, C_CHARTTIME, C_ITEMID],
-    "microbio": [C_SUBJECT_ID, C_HADM_ID, C_ICUSTAYID, C_CHARTTIME, C_CHARTDATE],
+    "comorbidities": [C_SUBJECT_ID, C_HADM_ID, C_ICUSTAYID, C_CONGESTIVE_HEART_FAILURE,
+        C_CARDIAC_ARRHYTHMIAS, C_VALVULAR_DISEASE,
+        C_PULMONARY_CIRCULATION, C_PERIPHERAL_VASCULAR, C_HYPERTENSION, C_PARALYSIS,
+        C_OTHER_NEUROLOGICAL, C_CHRONIC_PULMONARY, C_DIABETES_UNCOMPLICATED,
+        C_DIABETES_COMPLICATED, C_HYPOTHYROIDISM, C_RENAL_FAILURE, C_LIVER_DISEASE,
+        C_PEPTIC_ULCER, C_AIDS, C_LYMPHOMA, C_METASTATIC_CANCER, C_SOLID_TUMOR,
+        C_RHEUMATOID_ARTHRITIS, C_COAGULOPATHY, C_OBESITY, C_WEIGHT_LOSS,
+        C_FLUID_ELECTROLYTE, C_BLOOD_LOSS_ANEMIA, C_DEFICIENCY_ANEMIAS, C_ALCOHOL_ABUSE,
+        C_DRUG_ABUSE, C_PSYCHOSES, C_DEPRESSION],
+    "microbio": [C_SUBJECT_ID, C_HADM_ID, C_ICUSTAYID, C_CHARTTIME, C_CHARTDATE, C_TEST_ITEMID, C_SPEC_ITEMID, C_AB_ITEMID, C_INTERPRETATION],
     "demog": [C_SUBJECT_ID, C_HADM_ID, C_ICUSTAYID, C_ADMITTIME, C_DISCHTIME,
               C_ADM_ORDER, C_UNIT, C_INTIME, C_OUTTIME, C_LOS,
               C_AGE, C_DOB, C_DOD, C_EXPIRE_FLAG, C_GENDER,

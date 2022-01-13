@@ -21,6 +21,7 @@ file_list = [
     'abx',
     'demog',
     'ce',
+    'comorbidities',
     'labs_ce',
     'labs_le',
     'uo',
@@ -69,7 +70,7 @@ def load_data(bq_client, elixhauser_table, file_name, output_dir, skip_if_presen
         print('file exists, skipping')
         return
     
-    if file_name == 'demog':
+    if file_name in ('demog', 'comorbidities'):
         # Sub in the elixhauser table name
         query = query.format(elixhauser_table)
     query_result = bq_client.query(query)
