@@ -7,10 +7,9 @@ if [ "$command" = "extract" ]; then
   echo "EXTRACT DATA"
   echo "Using client secret: $2"
   echo "Using BigQuery project: $3"
-  echo "Using elixhauser quan table: $4"
   echo
 
-  python data_extraction/extract.py $2 $3 $4
+  python data_extraction/extract.py $2 $3
 
   echo "DONE"
 

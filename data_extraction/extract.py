@@ -8,8 +8,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 from google_auth_oauthlib import flow
 from google.cloud import bigquery
+from google.cloud.exceptions import NotFound
 
 from preprocessing.columns import RAW_DATA_COLUMNS
+
+DERIVED_DATASET_NAME = "derived_data"
+ELIXHAUSER_TABLE_NAME = "elixhauser_quan"
 
 file_list = [
     'culture',
@@ -75,6 +79,37 @@ def load_data(bq_client, elixhauser_table, file_name, output_dir, skip_if_presen
     result.columns = RAW_DATA_COLUMNS[file_name]
     result.to_csv(out_path, index=False)
 
+def generate_elixhauser_if_needed(bq_client, gcp_project, location="US"):
+    """
+    Retrieves the Elixhauser-Quan table from BigQuery, or creates it if it is
+    not found.
+    """
+    table_id = '.'.join([gcp_project, DERIVED_DATASET_NAME, ELIXHAUSER_TABLE_NAME])
+    
+    try:
+        bq_client.get_table(table_id)  # Make an API request.
+        print("Elixhauser table `{}` already exists, using it.".format(table_id))
+        return table_id
+    except NotFound:
+        print("Elixhauser table `{}` not found, generating it...".format(table_id))
+    
+        try:
+            bq_client.get_dataset(gcp_project + '.' + DERIVED_DATASET_NAME)
+        except NotFound:
+            dataset = bigquery.Dataset(gcp_project + '.' + DERIVED_DATASET_NAME)
+            dataset.location = location
+            dataset = bq_client.create_dataset(dataset, timeout=30)  # Make an API request.
+
+        job_config = bigquery.QueryJobConfig(destination=table_id)
+
+        with open(os.path.join(SQL_DIR, 'elixhauser.sql'), 'r') as file:
+            sql = file.read()
+        query_job = bq_client.query(sql, job_config=job_config)
+        query_job.result()
+
+        print("Elixhauser table complete.")
+        return table_id
+    
 def main():
     global bqclient
 
@@ -82,14 +117,14 @@ def main():
         'saves them as local CSV files.\n\nBefore running this script, be sure '
         'to create an OAuth client to use BigQuery, and download the client '
         'secret file as client_secret.json in the directory containing this '
-        'script. Also, you will need to generate the elixhauser_quan table for '
-        'MIMIC-IV by copying the contents of elixhauser.sql into the BigQuery '
-        'editor, and saving the results to a table in your Google account. Then, '
-        'pass the identifier of the table (e.g. `project-name.dataset_name.table_name`) '
-        'as the second parameter to this script.'))
+        'script. Also, you will need to create a project in the Google Cloud '
+        'Console, and pass its name as the second argument. This script will '
+        'look for a table called `{}.{}` within that project, and generate it '
+        'there if it is not found.'))
     parser.add_argument('secret', type=str, help='Path to BigQuery client secret')
     parser.add_argument('gcp_project', type=str, help='Name of the project within GCP that will be authenticated')
-    parser.add_argument('elixhauser', type=str, help='BigQuery table identifier for the elixhauser_quan table (pre-generate this using the sql/elixhauser.sql script)')
+    parser.add_argument('--location', dest='dataset_location', type=str, default='US',
+                        help='Location to create dataset if needed (default US)')
     parser.add_argument('--out', dest='output_dir', type=str, default=None,
                         help='Directory in which to output (default is data directory)')
     parser.add_argument('--skip-existing', dest='skip_existing', action='store_true', default=False,
@@ -111,11 +146,13 @@ def main():
     credentials = appflow.credentials
     bq_client = bigquery.Client(project=project, credentials=credentials)
 
+    elixhauser_table = generate_elixhauser_if_needed(bq_client, project, location=args.dataset_location)
+    
     out_dir = args.output_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'data', 'raw_data')
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
     for i, file_name in enumerate(file_list):
-        load_data(bq_client, args.elixhauser, file_name, out_dir, skip_if_present=args.skip_existing)
+        load_data(bq_client, elixhauser_table, file_name, out_dir, skip_if_present=args.skip_existing)
         print(str(i + 1) + '/' + str(len(file_list)))
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ The pipeline is split into three steps: data extraction, preprocessing, and mode
 
 ### Prerequisites
 
-**Package Requirements.** Optionally, create a conda or venv environment and activate it. Then install the package and its dependencies:
+**Package Requirements.** Create a conda or venv environment and activate it, if desired. Then install the package and its dependencies:
 
 ```
 pip install -e .
@@ -24,16 +24,14 @@ Setting up your client credentials if needed (see [this guide](https://cloud.goo
 
 You may want to save the client secret JSON file into this directory, and note the file path for later.
 
-You should create a GCP "project", which serves as a container for the queries and analyses you perform. To do so, go to the project selector (to the left of the search bar in the GCP console) and click New Project. Save the name of this project, as you will need it to authenticate the BigQuery client.
-
-**Elixhauser-Quan Table.** You will need to create a version of the derived Elixhauser-Quan comorbidities table in your BigQuery account. To do so, go to the [BigQuery SQL workspace](https://console.cloud.google.com/bigquery). Create a new query, and copy/paste the contents of the `data_extraction/sql/elixhauser.sql` file into the workspace. Run this query and save it to a BigQuery table within the project you created earlier. Take note of the name of this dataset (e.g. `project-name.dataset_name.elixhauser_quan`).
+You should create a GCP "project", which serves as a container for the queries and analyses you perform. To do so, go to the project selector (to the left of the search bar in the GCP console) and click New Project. Save the name of this project, as you will need it in the data extraction step.
 
 ### Simple Run Instructions
 
 Extract data into `data/` within this directory:
 
 ```
-python run.sh extract <PATH_TO_CLIENT_SECRET> <PROJECT_NAME> <ELIXHAUSER_DATASET_NAME>
+python run.sh extract <PATH_TO_CLIENT_SECRET> <GCP_PROJECT_NAME>
 ```
 
 Preprocess data, filter sepsis cohort, and generate full MIMIC dataset into a directory `data/<DATA_NAME>`:
