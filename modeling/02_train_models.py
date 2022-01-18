@@ -50,14 +50,6 @@ if __name__ == '__main__':
                         help='Number of bootstrappings to use for WIS estimation (AI policy)')
     args = parser.parse_args()
     
-    n_cluster_states = args.n_cluster_states
-    n_states = n_cluster_states + 2 # discharge and death are absorbing states
-    absorbing_states = [n_cluster_states + 1, n_cluster_states] # absorbing state numbers
-    rewards = [args.reward, -args.reward]
-
-    n_action_bins = args.n_action_bins
-    n_actions = n_action_bins * n_action_bins # for both vasopressors and fluids
-
     data_dir = args.data
     out_dir = os.path.join(data_dir, "models")
     if not os.path.exists(out_dir):
@@ -74,6 +66,9 @@ if __name__ == '__main__':
     
     # Bin vasopressor and fluid actions
     print("Create actions")    
+    n_action_bins = args.n_action_bins
+    n_actions = n_action_bins * n_action_bins # for both vasopressors and fluids
+
     all_actions, action_medians, action_bins = fit_action_bins(
         MIMICraw[C_INPUT_STEP],
         MIMICraw[C_MAX_DOSE_VASO],
@@ -96,62 +91,66 @@ if __name__ == '__main__':
 
         X_train = MIMICzs.iloc[train_indexes]
         X_val = MIMICzs.iloc[val_indexes]
-        blocs_train = metadata[C_BLOC].values[train_indexes]
-        blocs_val = metadata[C_BLOC].values[val_indexes]
-        stay_ids_train = metadata[C_ICUSTAYID].values[train_indexes]
-        stay_ids_val = metadata[C_ICUSTAYID].values[val_indexes]
-        outcomes_train = metadata[C_OUTCOME].values[train_indexes]
-        outcomes_val = metadata[C_OUTCOME].values[val_indexes]
+        metadata_train = metadata.iloc[train_indexes]
         actions_train = all_actions[train_indexes]
+        
+        metadata_val = metadata.iloc[val_indexes]
+        blocs_val = metadata_val[C_BLOC].values
+        stay_ids_val = metadata_val[C_ICUSTAYID].values
+        outcomes_val = metadata_val[C_OUTCOME].values
         actions_val = all_actions[val_indexes]
         
         model_stats = {}
         
-        # Find best clustering solution
-        print("Clustering")
-        clusterer, states_train = cluster_states(
-            X_train.values,
-            fit_fraction=args.cluster_fraction,
+        model = AIClinicianModel(
+            n_cluster_states=args.n_cluster_states,
+            n_actions=n_actions,
+            cluster_fit_fraction=args.cluster_fraction,
             n_cluster_init=args.n_cluster_init,
-            n_clusters=n_cluster_states)
-        
-        # Create qldata3
-        qldata3 = build_complete_record_sequences(
-            blocs_train,
-            stay_ids_train,
-            states_train,
-            actions_train,
-            outcomes_train,
-            absorbing_states,
-            rewards
-        )
-        
-        ####### BUILD MODEL ########
-        physpol, transitionr, R = compute_physician_policy(
-            qldata3,
-            n_states,
-            n_actions,
-            absorbing_states,
+            gamma=args.gamma,
             reward_val=args.reward,
             transition_threshold=args.transition_threshold
         )
-        
-        print("Policy iteration")
-        Q = compute_optimal_policy(physpol, transitionr, R, gamma=args.gamma)
-        optimal_actions = Q.argmax(axis=1)
+
+        model.train(
+            X_train.values,
+            actions_train,
+            metadata_train,
+            X_val=X_val.values,
+            actions_val=actions_val,
+            metadata_val=metadata_val
+        )
         
         ####### EVALUATE ON MIMIC TRAIN SET ########
 
+        states_train = model.compute_states(X_train.values)
+        
         print("Evaluate on MIMIC training set")
-        train_bootql, train_bootwis = evaluate_policy(
-            qldata3,
-            optimal_actions,
-            physpol,
-            n_cluster_states,
-            soften_factor=args.soften_factor,
-            gamma=args.gamma,
-            num_iter_ql=args.num_iter_ql,
-            num_iter_wis=args.num_iter_wis
+        records = build_complete_record_sequences(
+            metadata_train,
+            states_train,
+            actions_train,
+            model.absorbing_states,
+            model.rewards
+        )
+        
+        train_bootql = evaluate_physician_policy_td(
+            records,
+            model.physician_policy,
+            args.gamma,
+            args.num_iter_ql,
+            args.n_cluster_states
+        )
+        
+        phys_probs = model.compute_physician_probabilities(states=states_train, actions=actions_train)
+        model_probs = model.compute_probabilities(states=states_train, actions=actions_train)
+        train_bootwis, _,  _ = evaluate_policy_wis(
+            metadata_train,
+            phys_probs,
+            model_probs,
+            model.rewards,
+            args.gamma,
+            args.num_iter_wis
         )
 
         model_stats['train_bootql_mean'] = np.nanmean(train_bootql)
@@ -164,28 +163,33 @@ if __name__ == '__main__':
         ####### EVALUATE ON MIMIC VALIDATION SET ########
         
         print("Evaluate on MIMIC validation set")
-        states_val = clusterer.predict(X_val.values)
+        states_val = model.compute_states(X_val.values)
         
-        # Create qldata3
-        qldata3 = build_complete_record_sequences(
-            blocs_val,
-            stay_ids_val,
+        records = build_complete_record_sequences(
+            metadata_val,
             states_val,
             actions_val,
-            outcomes_val,
-            absorbing_states,
-            rewards
+            model.absorbing_states,
+            model.rewards
         )
         
-        val_bootql, val_bootwis = evaluate_policy(
-            qldata3,
-            optimal_actions,
-            physpol,
-            n_cluster_states,
-            soften_factor=args.soften_factor,
-            gamma=args.gamma,
-            num_iter_ql=args.num_iter_ql,
-            num_iter_wis=args.num_iter_wis
+        val_bootql = evaluate_physician_policy_td(
+            records,
+            model.physician_policy,
+            args.gamma,
+            args.num_iter_ql,
+            args.n_cluster_states
+        )
+        
+        phys_probs = model.compute_physician_probabilities(states=states_val, actions=actions_val)
+        model_probs = model.compute_probabilities(states=states_val, actions=actions_val)
+        val_bootwis, _,  _ = evaluate_policy_wis(
+            metadata_val,
+            phys_probs,
+            model_probs,
+            model.rewards,
+            args.gamma,
+            args.num_iter_wis
         )
 
         model_stats['val_bootql_0.95'] = np.quantile(val_bootql, 0.95)   #PHYSICIANS' 95# UB
@@ -218,31 +222,10 @@ if __name__ == '__main__':
             save_name = 'model_' + str(modl)
         if save_name:
             print("Saving model:", save_name)
-            model_data = {
-                'model_num': modl,
-                'Qon': Q,
-                'optimal_actions': optimal_actions,
-                'physician_policy': physpol,
-                'T': transitionr,
-                'R': R,
-                'clusterer': clusterer,
-                'train_ids': train_ids,
-                'val_ids': val_ids,
-                'train_bootql': train_bootql,
-                'train_bootwis': train_bootwis,
-                'val_bootql': val_bootql,
-                'val_bootwis': val_bootwis,
-                'action_medians': action_medians,
-                'action_bins': action_bins,
-                'n_cluster_states': n_cluster_states,
-                'absorbing_states': absorbing_states,
-                'rewards': rewards
-            }
             save_path = os.path.join(
                 model_specs_dir,
                 '{}.pkl'.format(save_name))
-            with open(save_path, 'wb') as file:
-                pickle.dump(model_data, file)
+            model.save(save_path)
 
     all_model_stats = pd.DataFrame(all_model_stats)
     all_model_stats.to_csv(os.path.join(out_dir, "model_stats{}.csv".format('_' + args.worker_label if args.worker_label else '')),

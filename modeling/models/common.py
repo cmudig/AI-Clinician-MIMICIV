@@ -53,12 +53,16 @@ def transform_actions(input_amounts, vaso_doses, cutoffs):
         (np.digitize(vaso_doses, vaso_cutoffs) - 1)
     )
 
-def build_complete_record_sequences(blocs, stay_ids, states, actions, outcomes, absorbing_states, reward_values):
+def build_complete_record_sequences(metadata, states, actions, absorbing_states, reward_values):
     """
     Builds a dataframe of timestepped records, adding a bloc at the end of each
     record sequence for the absorbing state (discharge or death) that occurs for
     the patient.
     """
+    stay_ids = metadata[C_ICUSTAYID].values
+    blocs = metadata[C_BLOC].values
+    outcomes = metadata[C_OUTCOME].values
+    
     qldata3 = []
     for i in range(len(blocs)):
         qldata3.append({
@@ -170,7 +174,7 @@ def build_record_sequences_with_policies(qldata3, predicted_actions, physpol, n_
 
 ### Evaluation
 
-def offpolicy_eval_tdlearning(qldata3, physpol, gamma, num_iter, n_cluster_states, alpha=0.1, num_traces=300000):
+def evaluate_physician_policy_td(qldata3, physpol, gamma, num_iter, n_cluster_states, alpha=0.1, num_traces=300000):
     """
     Performs off-policy evaluation on the physician policy.
     """
@@ -200,85 +204,81 @@ def offpolicy_eval_tdlearning(qldata3, physpol, gamma, num_iter, n_cluster_state
 
     return bootql
 
-
-def offpolicy_eval_wis( qldata3,gamma ,num_iter):
+def compute_wis_estimator(sequences, gamma):
     """
     Performs off-policy evaluation on the predicted policy using weighted
-    importance sampling (WIS).
+    importance sampling (WIS). For each trajectory, if the reward is provided at
+    a terminal state, this state *must* be included as one of the values in each
+    of the four array inputs.
     """
     # WIS estimator of AI policy
     # Thanks to Omer Gottesman (Harvard) for his assistance
 
+    # Compute the cumulative importance ratio rho for each trajectory
+    def compute_rho(trajectory):
+        physician_probs = trajectory[:, 0]
+        model_probs = trajectory[:, 1]
+        return np.prod(model_probs / physician_probs)
+    
+    rho_array = np.array([compute_rho(trace) for trace in sequences])
+    num_nonzero_rhos = (rho_array > 0).sum()
+
+    normalization = np.nansum(rho_array)
+
+    # Compute the individual trial estimators V_WIS, which are the discounted
+    # rewards over each trajectory weighted by rho
+    def compute_trial_estimator(trajectory):
+        rewards = trajectory[1:, 2]
+        discounts = gamma ** np.arange(-1, len(rewards) - 1)
+        return np.sum(discounts * rewards)
+        
+    individual_trial_estimators = np.array([compute_trial_estimator(trace) for trace in sequences])
+
+    # Normalize by rhos
+    bootwis = np.nansum(individual_trial_estimators * rho_array) / normalization
+
+    return bootwis, num_nonzero_rhos, individual_trial_estimators
+
+def evaluate_policy_wis(metadata, physician_probabilities, model_probabilities, reward_vals, gamma, num_iter):
+    """
+    Computes a bootstrapped WIS estimator 
+    """
     bootwis = np.zeros(num_iter)
-    p = qldata3[C_ICUSTAYID].unique()
+    stay_ids = metadata[C_ICUSTAYID].values
+    assert len(metadata) == len(physician_probabilities) == len(model_probabilities), "Mismatched lengths"
+    
+    p = np.unique(stay_ids)
     num_patients = min(25000, int(len(p) * 0.75))  # 25000 patients or 75% of samples, whichever is less
 
+    metadata = metadata.copy()
+    metadata[C_SOFTENED_PHYSICIAN_PROBABILITY] = physician_probabilities
+    metadata[C_SOFTENED_MODEL_PROBABILITY] = model_probabilities
+    def _make_wis_record(group):
+        # Structure:
+        # phys_prob, model_prob, reward (= 0)
+        # plus terminal state with reward from reward_vals
+        return np.vstack([
+            np.hstack([
+                group[[C_SOFTENED_PHYSICIAN_PROBABILITY,
+                       C_SOFTENED_MODEL_PROBABILITY]],
+                np.zeros((len(group), 1))]),
+            np.array([1, 1, reward_vals[group[C_OUTCOME].iloc[0]]])
+        ])
+    
     traces = {
-        stay_id: trace[[C_SOFTENED_PHYSICIAN_PROBABILITY,
-                        C_SOFTENED_MODEL_PROBABILITY,
-                        C_REWARD]].values
-        for stay_id, trace in qldata3.groupby(C_ICUSTAYID)
+        stay_id: _make_wis_record(trace)
+        for stay_id, trace in metadata.groupby(C_ICUSTAYID)
     }
     
     for jj in tqdm(range(num_iter), desc='WIS estimation'):
         # Sample the population
-        sample = [traces[stay_id] for stay_id in np.random.choice(p, size=num_patients, replace=False)]
+        sample_ids = np.random.choice(p, size=num_patients, replace=False)
         
-        # Compute the cumulative importance ratio rho for each trajectory
-        def compute_rho(trajectory):
-            physician_probs = trajectory[:-1, 0]
-            model_probs = trajectory[:-1, 1]
-            return np.prod(model_probs / physician_probs)
-        
-        rho_array = np.array([compute_rho(trace) for trace in sample])
-        num_nonzero_rhos = (rho_array > 0).sum()
-        invalid_rhos = np.isinf(rho_array) | np.isnan(rho_array)  #some rhos are INF
-
-        normalization = np.nansum(rho_array)
-
-        # Compute the individual trial estimators V_WIS, which are the discounted
-        # rewards over each trajectory weighted by rho
-        def compute_trial_estimator(trajectory):
-            rewards = trajectory[1:, 2]
-            discounts = gamma ** np.arange(-1, len(rewards) - 1)
-            return np.sum(discounts * rewards)
-            
-        individual_trial_estimators = np.array([compute_trial_estimator(trace) for trace in sample]) * rho_array
-
-        # Normalize by rhos
-        bootwis[jj] = np.nansum(individual_trial_estimators) / normalization
-        # print(np.quantile(rho_array, np.linspace(0, 1, 10)), np.quantile(rho_array / normalization, np.linspace(0, 1, 10)))
-
-    # Return the individual information for the last sampling run
-    individual_trial_estimators = individual_trial_estimators[~invalid_rhos] / rho_array[~invalid_rhos]
+        # Compute WIS estimator
+        bw, num_nonzero_rhos, individual_trial_estimators = compute_wis_estimator(
+            [traces[pid] for pid in sample_ids],
+            gamma
+        )
+        bootwis[jj] = bw
 
     return bootwis, num_nonzero_rhos, individual_trial_estimators
-
-def evaluate_policy(qldata3, predicted_actions, physpol, n_cluster_states, soften_factor=0.01, gamma=0.99, num_iter_ql=6, num_iter_wis=750):
-    """
-    Evaluates a policy using two off-policy evaluation methods on the given set
-    of patient trajectories.
-    
-    Parameters:
-        qldata3: A dataframe containing complete record sequences of each
-            patient
-        predicted_actions: A vector of length S (number of states) containing
-            the actions predicted by the policy to be evaluated.
-        physpol: The actual physician policy, expressed as a matrix (S, A) of
-            action probabilities given each state.
-            
-    Returns: Bootstrapped CIs for TD-learning and WIS.
-    """
-
-    qldata3 = build_record_sequences_with_policies(
-        qldata3,
-        predicted_actions,
-        physpol,
-        n_cluster_states,
-        soften_factor=soften_factor
-    )
-
-    bootql = offpolicy_eval_tdlearning(qldata3, physpol, gamma, num_iter_ql, n_cluster_states)
-    bootwis, _, _ = offpolicy_eval_wis(qldata3, gamma, num_iter_wis)
-
-    return bootql, bootwis
