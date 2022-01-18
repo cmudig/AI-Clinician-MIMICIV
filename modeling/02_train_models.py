@@ -5,7 +5,8 @@ import argparse
 import os
 import shutil
 import pickle
-from modeling.ai_clinician import *
+from modeling.models.ai_clinician import *
+from modeling.models.common import *
 from modeling.columns import C_OUTCOME
 from preprocessing.utils import load_csv
 from preprocessing.columns import *
@@ -126,16 +127,17 @@ if __name__ == '__main__':
         )
         
         ####### BUILD MODEL ########
-        Q, physpol, transitionr, R = compute_optimal_policy(
+        physpol, transitionr, R = compute_physician_policy(
             qldata3,
             n_states,
             n_actions,
             absorbing_states,
             reward_val=args.reward,
-            transition_threshold=args.transition_threshold,
-            gamma=args.gamma
+            transition_threshold=args.transition_threshold
         )
         
+        print("Policy iteration")
+        Q = compute_optimal_policy(physpol, transitionr, R, gamma=args.gamma)
         optimal_actions = Q.argmax(axis=1)
         
         ####### EVALUATE ON MIMIC TRAIN SET ########

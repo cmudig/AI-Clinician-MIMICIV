@@ -3,26 +3,7 @@ import pandas as pd
 from tqdm import tqdm
 from modeling.columns import *
 from preprocessing.columns import *
-from sklearn.cluster import MiniBatchKMeans, KMeans
-from modeling.MDPtoolbox import mdp_policy_iteration_with_Q
-from modeling.offpolicy import off_policy_q_learning
-
-def cluster_states(state_data, fit_fraction=0.25, n_cluster_init=32, n_clusters=750, random_state=None):
-    """
-    Produces a clustering of the given state data, where each state is
-    considered independent (even from the same patient).
-    
-    Returns: a clustering object that can be queried using a predict() function,
-        and an array of clustering indexes ranging from 0 to n_clusters.
-    """
-    sample = state_data[np.random.choice(len(state_data),
-                                         size=int(len(state_data) * fit_fraction),
-                                         replace=False)]
-    clusterer = MiniBatchKMeans(n_clusters=n_clusters,
-                                random_state=random_state,
-                                n_init=n_cluster_init,
-                                max_iter=30).fit(sample)
-    return clusterer, clusterer.predict(state_data)
+from modeling.models.offpolicy import off_policy_q_learning
 
 def fit_action_bins(input_amounts, vaso_doses, n_action_bins=5):
     """
@@ -128,17 +109,13 @@ def compute_transition_counts(qldata3, n_states, n_actions, transition_threshold
 
     return transitionr
     
-def compute_optimal_policy(qldata3, n_states, n_actions, absorbing_states, reward_val=100, transition_threshold=5, gamma=0.99):
+def compute_physician_policy(qldata3, n_states, n_actions, absorbing_states, reward_val=100, transition_threshold=5):
     """
-    Creates a treatment policy for the given data. Given a set of S states and
-    A actions, the policy is defined by an (S, A) matrix providing the long-term
-    (finite horizon?) reward for taking each action a from each state s.
+    Computes the physician policy based on the given set of trajectories.
     
-    Returns: The Q matrix (S, A) providing the value of taking each action from
-        each state; the physician's policy as an (S, A) probability matrix;
-        a transition matrix T(S', S, A); the reward matrix R(S, A).
+    Returns: the physician policy as an (S, A) probability matrix; a transition
+        matrix T(S', S, A); and the reward matrix R(S, A).
     """
-    
     # Average transition counts over S, A
     transitionr = compute_transition_counts(qldata3,
                                              n_states,
@@ -155,22 +132,9 @@ def compute_optimal_policy(qldata3, n_states, n_actions, absorbing_states, rewar
     transition_rewards[absorbing_states[1], :, :] = -reward_val
     
     R = (transitionr * transition_rewards).sum(axis=0)
-
-    print("Policy iteration")
-
-    _, _, _, Q = mdp_policy_iteration_with_Q(
-        np.swapaxes(transitionr, 0, 1),
-        R,
-        gamma,
-        np.ones(n_states)
-    )
-    # optimal_actions = Qon.argmax(axis=1)  #deterministic 
-
-    # print(optimal_actions.shape)
-    # print(optimal_actions)
     
-    return Q, physpol, transitionr, R
-
+    return physpol, transitionr, R
+    
 def build_record_sequences_with_policies(qldata3, predicted_actions, physpol, n_cluster_states, soften_factor=0.01):
     """
     Creates a copy of the given qldata3 containing softened physician and model
