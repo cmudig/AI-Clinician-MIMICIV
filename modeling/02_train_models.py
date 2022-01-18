@@ -89,18 +89,18 @@ if __name__ == '__main__':
         print("Model {} of {}".format(modl, args.n_models))
     
         # split into a train and validation set
-        train_ids, val_ids = train_test_split(unique_icu_stays, train_size=args.val_size)
-        train_indexes = metadata[C_ICUSTAYID].isin(train_ids).index
-        val_indexes = metadata[C_ICUSTAYID].isin(val_ids).index
+        train_ids, val_ids = train_test_split(unique_icu_stays, test_size=args.val_size)
+        train_indexes = metadata[metadata[C_ICUSTAYID].isin(train_ids)].index
+        val_indexes = metadata[metadata[C_ICUSTAYID].isin(val_ids)].index
 
         X_train = MIMICzs.iloc[train_indexes]
         X_val = MIMICzs.iloc[val_indexes]
-        blocs_train = metadata.loc[train_indexes, C_BLOC].values
-        blocs_val = metadata.loc[val_indexes, C_BLOC].values
-        stay_ids_train = metadata.loc[train_indexes, C_ICUSTAYID].values
-        stay_ids_val = metadata.loc[val_indexes, C_ICUSTAYID].values
-        outcomes_train = metadata.loc[train_indexes, C_OUTCOME].values
-        outcomes_val = metadata.loc[val_indexes, C_OUTCOME].values
+        blocs_train = metadata[C_BLOC].values[train_indexes]
+        blocs_val = metadata[C_BLOC].values[val_indexes]
+        stay_ids_train = metadata[C_ICUSTAYID].values[train_indexes]
+        stay_ids_val = metadata[C_ICUSTAYID].values[val_indexes]
+        outcomes_train = metadata[C_OUTCOME].values[train_indexes]
+        outcomes_val = metadata[C_OUTCOME].values[val_indexes]
         actions_train = all_actions[train_indexes]
         actions_val = all_actions[val_indexes]
         

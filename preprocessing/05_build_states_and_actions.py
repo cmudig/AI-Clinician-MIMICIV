@@ -6,7 +6,7 @@ from tqdm import tqdm
 from preprocessing.columns import *
 from preprocessing.utils import load_csv, load_intermediate_or_raw_csv
 
-def build_states_and_actions(df, qstime, inputMV, inputpreadm, vasoMV, demog, UOpreadm, UO, timestep_resolution, winb4, winaft, head=None):
+def build_states_and_actions(df, qstime, inputMV, inputpreadm, vasoMV, demog, UOpreadm, UO, timestep_resolution, winb4, winaft, head=None, allowed_stays=None):
     """
     Performs two tasks: bins the data into time intervals defined by 
     timestep_resolution, and adds input and output information (vasopressors,
@@ -14,7 +14,13 @@ def build_states_and_actions(df, qstime, inputMV, inputpreadm, vasoMV, demog, UO
     """
     icustayidlist = np.unique(df[C_ICUSTAYID])
     icustayidlist = sorted(icustayidlist[~pd.isna(icustayidlist)])
-    print("{} ICU stay IDs".format(len(icustayidlist)))
+    if allowed_stays is not None:
+        old_count = len(icustayidlist)
+        allowed_stays = set(allowed_stays)
+        icustayidlist = [id for id in icustayidlist if id in allowed_stays]
+        print("Filtered from {} to {} ICU stay ids".format(old_count, len(icustayidlist)))
+    else:
+        print("{} ICU stay IDs".format(len(icustayidlist)))
     if head:
         icustayidlist = icustayidlist[:head]
 
@@ -190,10 +196,14 @@ if __name__ == '__main__':
                         help='Number of ICU stays to convert')
     parser.add_argument('--mapping-file', dest='mapping_file', type=str, default=None,
                         help='Path to output a CSV file mapping rows of input to rows of output')
+    parser.add_argument('--filter-stays', dest='filter_stays_path', type=str, default=None,
+                        help='Path to a CSV file containing an icustayid column; output will be filtered to these ICU stays')
 
     args = parser.parse_args()
     base_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     data_dir = args.data_dir or os.path.join(base_path, 'data')
+    if not os.path.exists(os.path.dirname(args.output)):
+        os.mkdir(os.path.dirname(args.output))
 
     print("Reading states...")
     df = load_csv(args.input)
@@ -208,6 +218,12 @@ if __name__ == '__main__':
     UOpreadm = load_intermediate_or_raw_csv(data_dir, 'preadm_uo.csv')
     UO = load_intermediate_or_raw_csv(data_dir, 'uo.csv')
     
+    allowed_stays = None
+    if args.filter_stays_path:
+        print("Reading filter stays...")
+        allowed_stays_df = load_csv(args.filter_stays_path)
+        allowed_stays = allowed_stays_df[C_ICUSTAYID]
+
     result, mapping = build_states_and_actions(
         df,
         qstime,
@@ -220,7 +236,8 @@ if __name__ == '__main__':
         args.resolution,
         args.window_before,
         args.window_after,
-        head=args.head
+        head=args.head,
+        allowed_stays=allowed_stays
     )
     
     print("Writing to file")

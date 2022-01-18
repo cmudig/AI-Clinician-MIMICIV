@@ -43,7 +43,7 @@ def fit_action_bins(input_amounts, vaso_doses, n_action_bins=5):
     io = np.digitize(input_amounts, input_cutoffs)
     median_inputs = [
         np.median(input_amounts[io == bin_num])
-        for bin_num in range(n_action_bins)
+        for bin_num in range(1, n_action_bins + 1)
     ]
     
     # vc = vasopressor actions, same rule as input
@@ -51,7 +51,7 @@ def fit_action_bins(input_amounts, vaso_doses, n_action_bins=5):
     vc = np.digitize(vaso_doses, vaso_cutoffs)
     median_vaso = [
         np.median(vaso_doses[vc == bin_num])
-        for bin_num in range(n_action_bins)
+        for bin_num in range(1, n_action_bins + 1)
     ]
     
     med = np.array([io, vc])
@@ -283,6 +283,7 @@ def offpolicy_eval_wis( qldata3,gamma ,num_iter):
 
         # Normalize by rhos
         bootwis[jj] = np.nansum(individual_trial_estimators) / normalization
+        # print(np.quantile(rho_array, np.linspace(0, 1, 10)), np.quantile(rho_array / normalization, np.linspace(0, 1, 10)))
 
     # Return the individual information for the last sampling run
     individual_trial_estimators = individual_trial_estimators[~invalid_rhos] / rho_array[~invalid_rhos]

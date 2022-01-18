@@ -151,6 +151,8 @@ if __name__ == '__main__':
                         help="Number of hours after sepsis onset to include data (default 25)")
     parser.add_argument('--head', dest='head', type=int, default=None,
                         help='Number of rows at the beginning of onset data to convert to patient states')
+    parser.add_argument('--filter-stays', dest='filter_stays_path', type=str, default=None,
+                        help='Path to a CSV file containing an icustayid column; output will be filtered to these ICU stays')
 
     args = parser.parse_args()
     base_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -177,6 +179,14 @@ if __name__ == '__main__':
     print("Reading mechvent...")
     MV = load_intermediate_or_raw_csv(data_dir, 'mechvent.csv')
     MV_procedure = load_intermediate_or_raw_csv(data_dir, 'mechvent_pe.csv')
+    
+    if args.filter_stays_path:
+        print("Reading filter stays...")
+        allowed_stays_df = load_csv(args.filter_stays_path)
+        allowed_stays = allowed_stays_df[C_ICUSTAYID]
+        old_count = len(onset_data)
+        onset_data = onset_data[onset_data[C_ICUSTAYID].isin(allowed_stays)]
+        print("Filtered from {} to {} ICU stay ids".format(old_count, len(onset_data)))
 
     if args.head: onset_data = onset_data.head(args.head)
     state_df, qstime = build_patient_states(

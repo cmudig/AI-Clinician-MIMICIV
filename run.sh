@@ -9,6 +9,7 @@ if [ "$command" = "extract" ]; then
   echo "Using BigQuery project: $3"
   echo
 
+  mkdir -p data
   python data_extraction/extract.py $2 $3
 
   echo "DONE"
