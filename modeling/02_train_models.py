@@ -225,7 +225,22 @@ if __name__ == '__main__':
             save_path = os.path.join(
                 model_specs_dir,
                 '{}.pkl'.format(save_name))
-            model.save(save_path)
+            model.save(save_path, metadata={
+                'actions': {
+                    'n_action_bins': n_action_bins,
+                    'action_bins': action_bins,
+                    'action_medians': action_medians
+                },
+                'split': {
+                    'train_ids': train_ids,
+                    'val_ids': val_ids,
+                },
+                'eval': {
+                    'num_iter_ql': args.num_iter_ql,
+                    'num_iter_wis': args.num_iter_wis
+                },
+                'model_num': modl
+            })
 
     all_model_stats = pd.DataFrame(all_model_stats)
     all_model_stats.to_csv(os.path.join(out_dir, "model_stats{}.csv".format('_' + args.worker_label if args.worker_label else '')),

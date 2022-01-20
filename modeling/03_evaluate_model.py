@@ -34,23 +34,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     data_dir = args.data
-    with open(args.model, 'rb') as file:
-        model_data = pickle.load(file)
+    model = AIClinicianModel.load(args.model)
+    assert model.metadata is not None, "Model missing metadata needed to generate actions"
 
-    Q = model_data['Qon']
-    optimal_actions = model_data['optimal_actions']
-    transitionr = model_data['T']
-    R = model_data['R']
-    physpol = model_data['physician_policy']
-    clusterer = model_data['clusterer']
-    action_bins = model_data['action_bins']
-    rewards = model_data['rewards']
-    
-    n_cluster_states = len(clusterer.cluster_centers_)
-    n_states = n_cluster_states + 2 # discharge and death are absorbing states
-    absorbing_states = [n_cluster_states + 1, n_cluster_states] # absorbing state numbers
-    n_action_bins = len(action_bins[0])
-    n_actions = n_action_bins * n_action_bins
+    n_cluster_states = model.n_cluster_states
+    n_actions = model.n_actions
+    action_bins = model.metadata['actions']['action_bins']
 
     MIMICraw = load_csv(os.path.join(data_dir, "test", "MIMICraw.csv"))
     MIMICzs = load_csv(os.path.join(data_dir, "test", "MIMICzs.csv"))
@@ -72,28 +61,33 @@ if __name__ == '__main__':
     outcomes = metadata[C_OUTCOME].values
 
     print("Evaluate on MIMIC test set")
-    states = clusterer.predict(MIMICzs.values)
+    states = model.compute_states(MIMICzs.values)
     
-    # Create qldata3
-    qldata3 = build_complete_record_sequences(
-        blocs,
-        stay_ids,
+    records = build_complete_record_sequences(
+        metadata,
         states,
         actions,
-        outcomes,
-        absorbing_states,
-        rewards
+        model.absorbing_states,
+        model.rewards
     )
     
-    test_bootql, test_bootwis = evaluate_policy(
-        qldata3,
-        optimal_actions,
-        physpol,
-        n_cluster_states,
-        soften_factor=args.soften_factor,
-        gamma=args.gamma,
-        num_iter_ql=args.num_iter_ql,
-        num_iter_wis=args.num_iter_wis
+    test_bootql = evaluate_physician_policy_td(
+        records,
+        model.physician_policy,
+        args.gamma,
+        args.num_iter_ql,
+        model.n_cluster_states
+    )
+    
+    phys_probs = model.compute_physician_probabilities(states=states, actions=actions)
+    model_probs = model.compute_probabilities(states=states, actions=actions)
+    test_bootwis, _,  _ = evaluate_policy_wis(
+        metadata,
+        phys_probs,
+        model_probs,
+        model.rewards,
+        args.gamma,
+        args.num_iter_wis
     )
 
     model_stats = {}

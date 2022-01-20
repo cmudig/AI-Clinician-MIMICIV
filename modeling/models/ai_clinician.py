@@ -20,7 +20,8 @@ class AIClinicianModel(BaseModel):
                  reward_val=100,
                  transition_threshold=5,
                  soften_factor=0.01,
-                 random_state=None):
+                 random_state=None,
+                 metadata=None):
         super(AIClinicianModel, self).__init__()
         self.n_cluster_states = n_cluster_states
         self.n_actions = n_actions
@@ -31,6 +32,7 @@ class AIClinicianModel(BaseModel):
         self.reward_val = reward_val
         self.transition_threshold = transition_threshold
         self.soften_factor = soften_factor
+        self.metadata = metadata
         self.n_states = self.n_cluster_states + 2
         self.absorbing_states = [self.n_cluster_states + 1, self.n_cluster_states] # absorbing state numbers
         self.rewards = [self.reward_val, -self.reward_val]
@@ -142,7 +144,7 @@ class AIClinicianModel(BaseModel):
             return probs[np.arange(len(actions)), actions]
         return probs
         
-    def save(self, filepath):
+    def save(self, filepath, metadata=None):
         """
         Saves the model as a pickle to the given filepath.
         """
@@ -165,6 +167,8 @@ class AIClinicianModel(BaseModel):
                 'soften_factor': self.soften_factor
             }
         }
+        if metadata is not None:
+            model_data['metadata'] = metadata 
         with open(filepath, 'wb') as file:
             pickle.dump(model_data, file)
     
@@ -175,8 +179,9 @@ class AIClinicianModel(BaseModel):
         """
         with open(filepath, 'rb') as file:
             model_data = pickle.load(file)
-        assert model_data['model_type'] == 'AIClinician', 'Invalid model type for AIClinicianModel'
+        assert model_data['model_type'] == 'AIClinicianModel', 'Invalid model type for AIClinicianModel'
         model = cls(**model_data['params'])
+        model.metadata = model_data.get('metadata', None)
         model.clusterer = model_data['clusterer']
         model.physician_policy = model_data['physician_policy']
         model.Q = model_data['Qon']
