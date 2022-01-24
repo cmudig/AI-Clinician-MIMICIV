@@ -53,7 +53,7 @@ class BaseModel:
         """
         raise NotImplementedError
         
-    def save(self, filepath):
+    def save(self, filepath, metadata=None):
         """
         Saves the model as a pickle to the given filepath.
         """

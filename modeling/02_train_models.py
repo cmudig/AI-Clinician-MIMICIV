@@ -5,8 +5,9 @@ import argparse
 import os
 import shutil
 import pickle
-from modeling.models.ai_clinician import *
+from modeling.models.ai_clinician import AIClinicianModel
 from modeling.models.common import *
+from modeling.models.dqn import DuelingDQNModel
 from modeling.columns import C_OUTCOME
 from preprocessing.utils import load_csv
 from preprocessing.columns import *
@@ -28,6 +29,8 @@ if __name__ == '__main__':
                         help='Proportion of data to use for validation')
     parser.add_argument('--n-models', dest='n_models', type=int, default=100,
                         help='Number of models to build')
+    parser.add_argument('--model-type', dest='model_type', type=str, default='AIClinician',
+                        help='Model type to train (AIClinician or DuelingDQN)')
     parser.add_argument('--cluster-fraction', dest='cluster_fraction', type=float, default=0.25,
                         help='Fraction of patient states to sample for state clustering')
     parser.add_argument('--n-cluster-init', dest='n_cluster_init', type=int, default=32,
@@ -48,6 +51,10 @@ if __name__ == '__main__':
                         help='Number of bootstrappings to use for TD learning (physician policy)')
     parser.add_argument('--num-iter-wis', dest='num_iter_wis', type=int, default=750,
                         help='Number of bootstrappings to use for WIS estimation (AI policy)')
+    parser.add_argument('--state-dim', dest='state_dim', type=int, default=256,
+                        help='Dimension for learned state representation in DQN')
+    parser.add_argument('--hidden-dim', dest='hidden_dim', type=int, default=128,
+                        help='Number of units in hidden layer for DQN')
     args = parser.parse_args()
     
     data_dir = args.data
@@ -78,6 +85,8 @@ if __name__ == '__main__':
     all_model_stats = []
     max_wis_lb = 0 # Save the best model with value > 0
     min_wis_lb = 1e9 # Also save the worst model
+    
+    model_type = args.model_type
 
     np.seterr(divide='ignore', invalid='ignore')
     
@@ -102,7 +111,7 @@ if __name__ == '__main__':
         
         model_stats = {}
         
-        model = AIClinicianModel(
+        base_model = AIClinicianModel(
             n_cluster_states=args.n_cluster_states,
             n_actions=n_actions,
             cluster_fit_fraction=args.cluster_fraction,
@@ -111,8 +120,17 @@ if __name__ == '__main__':
             reward_val=args.reward,
             transition_threshold=args.transition_threshold
         )
+        if model_type == 'DuelingDQN':
+            model = DuelingDQNModel(
+                state_dim=args.state_dim,
+                n_actions=n_actions,
+                hidden_dim=args.hidden_dim,
+                gamma=args.gamma,
+                reward_val=args.reward)
+        else:
+            model = base_model
 
-        model.train(
+        base_model.train(
             X_train.values,
             actions_train,
             metadata_train,
@@ -120,35 +138,44 @@ if __name__ == '__main__':
             actions_val=actions_val,
             metadata_val=metadata_val
         )
+        if model != base_model:
+            model.train(
+                X_train.values,
+                actions_train,
+                metadata_train,
+                X_val=X_val.values,
+                actions_val=actions_val,
+                metadata_val=metadata_val
+            )
         
         ####### EVALUATE ON MIMIC TRAIN SET ########
 
-        states_train = model.compute_states(X_train.values)
+        states_train = base_model.compute_states(X_train.values)
         
         print("Evaluate on MIMIC training set")
         records = build_complete_record_sequences(
             metadata_train,
             states_train,
             actions_train,
-            model.absorbing_states,
-            model.rewards
+            base_model.absorbing_states,
+            base_model.rewards
         )
         
         train_bootql = evaluate_physician_policy_td(
             records,
-            model.physician_policy,
+            base_model.physician_policy,
             args.gamma,
             args.num_iter_ql,
             args.n_cluster_states
         )
         
-        phys_probs = model.compute_physician_probabilities(states=states_train, actions=actions_train)
-        model_probs = model.compute_probabilities(states=states_train, actions=actions_train)
+        phys_probs = base_model.compute_physician_probabilities(states=states_train, actions=actions_train)
+        model_probs = model.compute_probabilities(X=X_train.values, actions=actions_train)
         train_bootwis, _,  _ = evaluate_policy_wis(
             metadata_train,
             phys_probs,
             model_probs,
-            model.rewards,
+            base_model.rewards,
             args.gamma,
             args.num_iter_wis
         )
@@ -163,31 +190,31 @@ if __name__ == '__main__':
         ####### EVALUATE ON MIMIC VALIDATION SET ########
         
         print("Evaluate on MIMIC validation set")
-        states_val = model.compute_states(X_val.values)
+        states_val = base_model.compute_states(X_val.values)
         
         records = build_complete_record_sequences(
             metadata_val,
             states_val,
             actions_val,
-            model.absorbing_states,
-            model.rewards
+            base_model.absorbing_states,
+            base_model.rewards
         )
         
         val_bootql = evaluate_physician_policy_td(
             records,
-            model.physician_policy,
+            base_model.physician_policy,
             args.gamma,
             args.num_iter_ql,
             args.n_cluster_states
         )
         
-        phys_probs = model.compute_physician_probabilities(states=states_val, actions=actions_val)
-        model_probs = model.compute_probabilities(states=states_val, actions=actions_val)
+        phys_probs = base_model.compute_physician_probabilities(states=states_val, actions=actions_val)
+        model_probs = model.compute_probabilities(X=X_val.values, actions=actions_val)
         val_bootwis, _,  _ = evaluate_policy_wis(
             metadata_val,
             phys_probs,
             model_probs,
-            model.rewards,
+            base_model.rewards,
             args.gamma,
             args.num_iter_wis
         )
