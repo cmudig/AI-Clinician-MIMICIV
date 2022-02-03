@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+from tqdm
 import argparse
 import os
 from preprocessing.utils import load_csv
@@ -10,7 +10,7 @@ from scipy.stats import zscore
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
-tqdm.pandas()
+tqdm.tqdm.pandas()
 
 def preprocess_normalized_data(MIMICzs):
     """Performs ad-hoc normalization on the normalized variables."""
@@ -101,7 +101,7 @@ if __name__ == '__main__':
                     metadata.iloc[train_indexes])
     save_data_files(test_dir,
                     MIMICraw.iloc[test_indexes],
-                    MIMICzs_train,
+                    MIMICzs_test,
                     metadata.iloc[test_indexes])    
     print("Done.")
     

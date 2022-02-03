@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from tqdm import tqdm
+from tqdm
 import os
 import argparse
 import sys
@@ -60,7 +60,7 @@ def load_data(bq_client, elixhauser_table, file_name, output_dir, skip_if_presen
             query_result = bq_client.query(query_)
 
             result = pd.DataFrame([dict(zip(range(len(result)), result))
-                                   for result in tqdm(query_result, desc=file_name + str(i) + str(i + id_step))])
+                                   for result in tqdm.tqdm(query_result, desc=file_name + str(i) + str(i + id_step))])
             result.columns = RAW_DATA_COLUMNS['ce']
             result.to_csv(out_path, index=False)
         return
@@ -76,7 +76,7 @@ def load_data(bq_client, elixhauser_table, file_name, output_dir, skip_if_presen
     query_result = bq_client.query(query)
 
     result = pd.DataFrame([dict(zip(range(len(result)), result))
-                           for result in tqdm(query_result, desc=file_name)])
+                           for result in tqdm.tqdm(query_result, desc=file_name)])
     result.columns = RAW_DATA_COLUMNS[file_name]
     result.to_csv(out_path, index=False)
 

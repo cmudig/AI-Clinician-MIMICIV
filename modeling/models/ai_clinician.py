@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 import pickle
 from modeling.columns import *
 from preprocessing.columns import *

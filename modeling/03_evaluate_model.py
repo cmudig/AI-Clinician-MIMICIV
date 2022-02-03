@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+from tqdm
 import argparse
 import os
 import shutil
@@ -12,7 +12,7 @@ from preprocessing.utils import load_csv
 from preprocessing.columns import *
 from sklearn.model_selection import train_test_split
 
-tqdm.pandas()
+tqdm.tqdm.pandas()
 
 if __name__ == '__main__':
 

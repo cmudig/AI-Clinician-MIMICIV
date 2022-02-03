@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
 from .columns import *
-from tqdm import tqdm
+import tqdm
 from sklearn.impute import KNNImputer
 from sklearn.metrics import pairwise_distances
 
@@ -120,7 +120,7 @@ def sample_and_hold(stay_ids, chart_times, series, hold_time, provenance=None, c
     prov_sources = np.zeros(len(series), dtype=int)
     prov_position = 0
     
-    for i in tqdm(range(len(series))):
+    for i in tqdm.tqdm(range(len(series))):
         stay_id = stay_ids[i]
         chart_time = chart_times[i]
         val = series[i]
@@ -244,7 +244,7 @@ def knn_impute(data, batch_size=10000, na_threshold=1, provenance=None):
 
     data = data.copy()    
 
-    bar = tqdm(range(0, len(data), batch_size))
+    bar = tqdm.tqdm(range(0, len(data), batch_size))
     for start_idx in bar:
         end_idx = min(len(data), start_idx + batch_size) - 1
         # missNotAll columns have at least one non-NaN value and will be used in 

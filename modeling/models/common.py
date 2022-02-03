@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+import tqdm
 from modeling.columns import *
 from preprocessing.columns import *
 from modeling.models.offpolicy import off_policy_q_learning
@@ -192,7 +192,7 @@ def evaluate_physician_policy_td(qldata3, physpol, gamma, num_iter, n_cluster_st
         for stay_id, trace in qldata3.groupby(C_ICUSTAYID)
     }
     
-    for i in tqdm(range(num_iter), desc='TD evaluation'):
+    for i in tqdm.tqdm(range(num_iter), desc='TD evaluation'):
         Qoff, _ = off_policy_q_learning(
             traces,
             n_states, n_actions,
@@ -270,7 +270,7 @@ def evaluate_policy_wis(metadata, physician_probabilities, model_probabilities, 
         for stay_id, trace in metadata.groupby(C_ICUSTAYID)
     }
     
-    for jj in tqdm(range(num_iter), desc='WIS estimation'):
+    for jj in tqdm.tqdm(range(num_iter), desc='WIS estimation'):
         # Sample the population
         sample_ids = np.random.choice(p, size=num_patients, replace=False)
         

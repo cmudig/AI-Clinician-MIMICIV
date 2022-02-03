@@ -1,5 +1,5 @@
 import numpy as np
-from tqdm import tqdm
+import tqdm
 from numba import jit
 from modeling.columns import *
 from preprocessing.columns import C_ICUSTAYID
@@ -58,7 +58,7 @@ def offpolicy_eval_tdlearning( qldata3, physpol, gamma, num_iter ):
     for i in range(ncl):
         d[i] = sum(a == i)    # intitial state disctribution
 
-    for i in tqdm(range(num_iter), desc='ql evaluation'):
+    for i in tqdm.tqdm(range(num_iter), desc='ql evaluation'):
 
         ii = np.floor(np.random.rand(len(p)) + prop)     # select a random sample of trajectories
         j = np.isin(qldata3[:, 7], p[ii == 1])
@@ -91,7 +91,7 @@ def offpolicy_eval_wis( qldata3,gamma ,num_iter):
     prop = min(prop, 0.75)  #max possible value is 0.75 (75# of the samples are used)
 
 
-    for jj in tqdm(range(num_iter), desc='wis evaluation'):
+    for jj in tqdm.tqdm(range(num_iter), desc='wis evaluation'):
         
         ii = np.floor(np.random.rand(len(p)) + prop) # prop# of the samples are used
         j = np.isin(qldata3[:, 7], p[ii == 1])
