@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 import tqdm
-from modeling.columns import *
-from preprocessing.columns import *
-from modeling.models.offpolicy import off_policy_q_learning
+from ai_clinician.modeling.columns import *
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.modeling.models.offpolicy import off_policy_q_learning
 
 def fit_action_bins(input_amounts, vaso_doses, n_action_bins=5):
     """

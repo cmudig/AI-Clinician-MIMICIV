@@ -1,15 +1,15 @@
 import numpy as np
 import pandas as pd
-from tqdm
+import tqdm
 import argparse
 import os
 import shutil
 import pickle
-from modeling.models.ai_clinician import *
-from modeling.models.common import *
-from modeling.columns import C_OUTCOME
-from preprocessing.utils import load_csv
-from preprocessing.columns import *
+from .models.ai_clinician import *
+from .models.common import *
+from .columns import C_OUTCOME
+from ai_clinician.preprocessing.utils import load_csv
+from ai_clinician.preprocessing.columns import *
 from sklearn.model_selection import train_test_split
 
 tqdm.tqdm.pandas()

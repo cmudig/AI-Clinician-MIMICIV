@@ -1,4 +1,4 @@
-from preprocessing.columns import *
+from ai_clinician.preprocessing.columns import *
 
 C_OUTCOME = "outcome"
 C_STATE = "state"

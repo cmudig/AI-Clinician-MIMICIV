@@ -3,14 +3,12 @@ import numpy as np
 import tqdm
 import os
 import argparse
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 from google_auth_oauthlib import flow
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 
-from preprocessing.columns import RAW_DATA_COLUMNS
+from ai_clinician.preprocessing.columns import RAW_DATA_COLUMNS
 
 DERIVED_DATASET_NAME = "derived_data"
 ELIXHAUSER_TABLE_NAME = "elixhauser_quan"

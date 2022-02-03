@@ -1,11 +1,11 @@
 import numpy as np
 import pandas as pd
-from tqdm
+import tqdm
 import argparse
 import os
-from preprocessing.utils import load_csv
-from modeling.columns import *
-from preprocessing.columns import *
+from ai_clinician.preprocessing.utils import load_csv
+from ai_clinician.preprocessing.columns import *
+from .columns import *
 from scipy.stats import zscore
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler

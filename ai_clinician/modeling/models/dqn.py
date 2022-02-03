@@ -2,10 +2,10 @@ import numpy as np
 import tqdm
 import pickle
 
-from preprocessing.columns import *
-from modeling.columns import *
-from modeling.models.base_ import BaseModel
-from modeling.models.torch_modules import SparseAutoencoder, DuelingDQN, PrioritizedBuffer, embed_autoencoder, test_autoencoder, train_autoencoder
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.modeling.columns import *
+from ai_clinician.modeling.models.base_ import BaseModel
+from ai_clinician.modeling.models.torch_modules import SparseAutoencoder, DuelingDQN, PrioritizedBuffer, embed_autoencoder, test_autoencoder, train_autoencoder
 
 import torch
 from torch.utils.data import TensorDataset, DataLoader

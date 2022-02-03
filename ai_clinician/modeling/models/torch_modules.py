@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from modeling.data_structures import SumTree
+from ai_clinician.modeling.data_structures import SumTree
 
 # https://github.com/AntonP999/Sparse_autoencoder
 
