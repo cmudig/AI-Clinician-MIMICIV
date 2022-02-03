@@ -1,6 +1,8 @@
 from setuptools import setup, find_packages
 
-setup(name='ai_clinician_mimiciv',
+pkg_name = 'ai_clinician'
+
+setup(name=pkg_name,
       version='0.1', 
       packages=find_packages(),
       install_requires=[
@@ -9,7 +11,7 @@ setup(name='ai_clinician_mimiciv',
           'sklearn>=0.0',
           'scipy>=1.4.1',
           'tqdm>=4.61.2',
-          'matplotlib~=3.3.4',
+          'matplotlib>=3.3.4',
           'google-auth-oauthlib>=0.4.6',
           'google-cloud-bigquery>=2.30.1',
       ])
