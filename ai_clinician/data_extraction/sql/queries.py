@@ -130,7 +130,7 @@ def abx(mimiciii=False):
                 hadm_id, icustay_id,
                 UNIX_SECONDS(TIMESTAMP(startdate)) as startdate,
                 UNIX_SECONDS(TIMESTAMP(enddate)) as enddate,
-                gsn, ndc, dose_val_rx
+                gsn, ndc, dose_val_rx, dose_unit_rx, route
             from `physionet-data.mimiciii_clinical.prescriptions`
             where gsn in {gsn}
             order by hadm_id, icustay_id
@@ -142,7 +142,7 @@ def abx(mimiciii=False):
                 i.stay_id as icustay_id, 
                 UNIX_SECONDS(TIMESTAMP(p.starttime)) as startdate, 
                 UNIX_SECONDS(TIMESTAMP(p.stoptime)) as enddate, 
-                gsn, ndc, dose_val_rx
+                gsn, ndc, dose_val_rx, dose_unit_rx, route
             from `physionet-data.mimic_hosp.prescriptions` as p
                 left outer join `physionet-data.mimic_icu.icustays` as i 
                 on p.hadm_id=i.hadm_id
@@ -526,7 +526,7 @@ def microbio(mimiciii=False):
             i.{stay_id_field} as icustay_id, 
             UNIX_SECONDS(TIMESTAMP(m.charttime)) as charttime, 
             UNIX_SECONDS(TIMESTAMP(m.chartdate)) as chartdate, 
-            spec_itemid, ab_itemid, interpretation
+            org_itemid, spec_itemid, ab_itemid, interpretation
         from `{events}` m left OUTER JOIN `{stays}` i on m.subject_id=i.subject_id and m.hadm_id=i.hadm_id
     """
     kwargs = {}
