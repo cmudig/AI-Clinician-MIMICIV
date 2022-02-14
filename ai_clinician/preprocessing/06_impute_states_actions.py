@@ -3,11 +3,11 @@ import numpy as np
 import os
 import argparse
 from tqdm import tqdm
-from preprocessing.columns import *
-from preprocessing.provenance import ProvenanceWriter
-from preprocessing.utils import load_csv
-from preprocessing.imputation import fixgaps, knn_impute
-from preprocessing.derived_features import compute_pao2_fio2, compute_shock_index, compute_sofa, compute_sirs
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.preprocessing.provenance import ProvenanceWriter
+from ai_clinician.preprocessing.utils import load_csv
+from ai_clinician.preprocessing.imputation import fixgaps, knn_impute
+from ai_clinician.preprocessing.derived_features import compute_pao2_fio2, compute_shock_index, compute_sofa, compute_sirs
 
 def correct_features(df, provenance=None):
     # CORRECT GENDER

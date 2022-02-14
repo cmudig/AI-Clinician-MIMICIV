@@ -3,9 +3,8 @@ import numpy as np
 import os
 import argparse
 from tqdm import tqdm
-import time
-from preprocessing.columns import *
-from preprocessing.utils import load_csv, load_intermediate_or_raw_csv
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.preprocessing.utils import load_csv, load_intermediate_or_raw_csv
 
 class ChartEvents:
     """
@@ -61,14 +60,16 @@ def build_patient_states(chart_events, onset_data, demog, labU, MV, MV_procedure
         temp = time_window(chart_events.fetch(icustayid), C_CHARTTIME, qst, *bounds)
         temp2 = time_window(labU[labU[C_ICUSTAYID] == icustayid], C_CHARTTIME, qst, *bounds)
         temp3 = time_window(MV[MV[C_ICUSTAYID] == icustayid], C_CHARTTIME, qst, *bounds)
-        temp4 = time_window(MV_procedure[MV_procedure[C_ICUSTAYID] == icustayid], C_STARTTIME, qst, *bounds)
+        if MV_procedure is not None:
+            temp4 = time_window(MV_procedure[MV_procedure[C_ICUSTAYID] == icustayid], C_STARTTIME, qst, *bounds)
+        else:
+            temp4 = None
         
         # list of unique timestamps from all 3 sources / sorted in ascending order
         timesteps = sorted(pd.unique(pd.concat([
             temp[C_CHARTTIME], 
             temp2[C_CHARTTIME], 
-            temp3[C_CHARTTIME], 
-            temp4[C_STARTTIME]], ignore_index=True)))
+            temp3[C_CHARTTIME]] + ([temp4[C_STARTTIME]] if temp4 is not None else []), ignore_index=True)))
 
         if len(timesteps) == 0:
             continue
@@ -108,7 +109,7 @@ def build_patient_states(chart_events, onset_data, demog, labU, MV, MV_procedure
                 item[C_EXTUBATED] = event[C_EXTUBATED]
             
             # Second source of mechanical ventilation information
-            if C_MECHVENT not in item and (temp4[C_STARTTIME] == timestep).sum() > 0:
+            if temp4 is not None and C_MECHVENT not in item and (temp4[C_STARTTIME] == timestep).sum() > 0:
                 events = temp4[temp4[C_STARTTIME] == timestep]
                 item[C_MECHVENT] = events[C_MECHVENT].any().astype(int)
                 item[C_EXTUBATED] = events[C_EXTUBATED].any().astype(int)
@@ -161,11 +162,13 @@ if __name__ == '__main__':
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
 
-    id_step = int(1e6)
-    id_max = int(1e7)
     print("Reading chartevents...")
-    chart_events = ChartEvents([load_intermediate_or_raw_csv(data_dir, 'ce{}{}.csv'.format(i, i + id_step))
-                                for i in range(0, id_max, id_step)])
+    ce_paths = (
+        [path for path in os.listdir(data_dir) if path.startswith("ce") and path.endswith(".csv")] + 
+        [path for path in os.listdir(os.path.join(data_dir, 'intermediates')) if path.startswith("ce") and path.endswith(".csv")]
+    )
+    chart_events = ChartEvents([load_intermediate_or_raw_csv(data_dir, path)
+                                for path in ce_paths])
     print("Reading onset data...")
     onset_data = load_csv(os.path.join(data_dir, 'intermediates', 'sepsis_onset.csv'))
     print("Reading demog...")
@@ -178,7 +181,10 @@ if __name__ == '__main__':
 
     print("Reading mechvent...")
     MV = load_intermediate_or_raw_csv(data_dir, 'mechvent.csv')
-    MV_procedure = load_intermediate_or_raw_csv(data_dir, 'mechvent_pe.csv')
+    try:
+        MV_procedure = load_intermediate_or_raw_csv(data_dir, 'mechvent_pe.csv')
+    except FileNotFoundError:
+        MV_procedure = None
     
     if args.filter_stays_path:
         print("Reading filter stays...")

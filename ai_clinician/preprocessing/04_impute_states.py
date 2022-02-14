@@ -4,10 +4,10 @@ import os
 import argparse
 from tqdm import tqdm
 
-from preprocessing.provenance import ProvenanceWriter
-from preprocessing.columns import *
-from preprocessing.utils import load_csv
-from preprocessing.imputation import fill_outliers, fill_stepwise, sample_and_hold
+from ai_clinician.preprocessing.provenance import ProvenanceWriter
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.preprocessing.utils import load_csv
+from ai_clinician.preprocessing.imputation import fill_outliers, fill_stepwise, sample_and_hold
 
 def remove_outliers(df, provenance=None):
     # Transfer temperatures tagged as celsius but obviously fahrenheit

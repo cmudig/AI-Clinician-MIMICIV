@@ -3,27 +3,11 @@ import pandas as pd
 from tqdm import tqdm
 import argparse
 import os
-from .utils import load_csv
-from .columns import *
-from .imputation import impute_icustay_ids
+from ai_clinician.preprocessing.utils import load_csv
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.preprocessing.imputation import impute_icustay_ids
 
 tqdm.pandas()
-
-# Files to preprocess using this script
-item_id_file_list = [
-    'labs_le.csv',
-    'labs_ce.csv', 
-    'ce01000000.csv',
-    'ce10000002000000.csv',
-    'ce20000003000000.csv',
-    'ce30000004000000.csv',
-    'ce40000005000000.csv',
-    'ce50000006000000.csv',
-    'ce60000007000000.csv',
-    'ce70000008000000.csv',
-    'ce80000009000000.csv',
-    'ce900000010000000.csv',
-]
 
 if __name__ == '__main__':
 
@@ -49,14 +33,12 @@ if __name__ == '__main__':
         os.mkdir(out_dir)
 
     if not args.no_simplify_events:        
-        for file_name in tqdm(item_id_file_list):
+        paths = [p for p in os.listdir(in_dir) if p.startswith("labs") or p.startswith("ce")]
+        for file_name in tqdm(paths):
             if file_name.startswith("labs"):
                 ref_vals = REF_LABS
             elif file_name.startswith("ce"):
                 ref_vals = REF_VITALS
-            else:
-                print("Unknown file name '{}', skipping".format(file_name))
-                continue
             
             df = pd.read_csv(os.path.join(in_dir, file_name), dtype={C_ITEMID: int})
             
@@ -69,14 +51,14 @@ if __name__ == '__main__':
             df[C_ITEMID].replace(converter, inplace=True)
             df.to_csv(os.path.join(out_dir, file_name), index=False)
 
-    demog = load_csv(os.path.join(in_dir, 'demog.csv'))
-    abx = load_csv(os.path.join(in_dir, 'abx.csv'))
+    demog = load_csv(os.path.join(in_dir, 'demog.csv'), null_icustayid=True)
+    abx = load_csv(os.path.join(in_dir, 'abx.csv'), null_icustayid=True)
 
     if not args.no_bacterio:
         # Produce bacterio dataframe by combining microbio and culture
         print("Generating bacterio")
-        culture = load_csv(os.path.join(in_dir, 'culture.csv'))
-        microbio = load_csv(os.path.join(in_dir, 'microbio.csv'))
+        culture = load_csv(os.path.join(in_dir, 'culture.csv'), null_icustayid=True)
+        microbio = load_csv(os.path.join(in_dir, 'microbio.csv'), null_icustayid=True)
 
         # use chartdate to fill in empty charttimes
         ii = microbio[C_CHARTTIME].isnull()
@@ -121,3 +103,24 @@ if __name__ == '__main__':
     inputMV = load_csv(os.path.join(in_dir, 'fluid_mv.csv'))
     inputMV.loc[:, C_NORM_INFUSION_RATE] = inputMV[:][C_TEV] * inputMV[:][C_RATE] / inputMV[:][C_AMOUNT]
     inputMV.to_csv(os.path.join(out_dir, "fluid_mv.csv"), index=False)
+    
+    print("Correcting nans [mechvent]")
+    mechvent = load_csv(os.path.join(in_dir, 'mechvent.csv'), null_icustayid=True)
+    mechvent = mechvent[~pd.isna(mechvent[C_ICUSTAYID])]
+    mechvent.to_csv(os.path.join(out_dir, "mechvent.csv"), index=False)
+    
+    print("Correcting nans [vaso_mv]")
+    vaso_mv = load_csv(os.path.join(in_dir, 'vaso_mv.csv'), null_icustayid=True)
+    vaso_mv = vaso_mv[~pd.isna(vaso_mv[C_ICUSTAYID])]
+    vaso_mv.to_csv(os.path.join(out_dir, "vaso_mv.csv"), index=False)
+    
+    print("Correcting nans [vaso_cv]")
+    vaso_cv = load_csv(os.path.join(in_dir, 'vaso_cv.csv'), null_icustayid=True)
+    vaso_cv = vaso_cv[~pd.isna(vaso_cv[C_ICUSTAYID])]
+    vaso_cv.to_csv(os.path.join(out_dir, "vaso_cv.csv"), index=False)
+    
+    print("Correcting nans [fluid_cv]")
+    fluid_cv = load_csv(os.path.join(in_dir, 'fluid_cv.csv'), null_icustayid=True)
+    fluid_cv = fluid_cv[~pd.isna(fluid_cv[C_ICUSTAYID])]
+    fluid_cv.to_csv(os.path.join(out_dir, "fluid_cv.csv"), index=False)
+    

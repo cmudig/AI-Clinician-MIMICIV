@@ -2,9 +2,9 @@ import pandas as pd
 import numpy as np
 import os
 import argparse
-from tqdm import tqdm
-from preprocessing.columns import *
-from preprocessing.utils import load_csv
+import tqdm
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.preprocessing.utils import load_csv
 
 def outlier_stay_ids(df):
     """Returns a list of ICU stay IDs that should be removed from the dataset."""
