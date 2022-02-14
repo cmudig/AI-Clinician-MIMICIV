@@ -6,6 +6,8 @@ from tqdm import tqdm
 from ai_clinician.preprocessing.columns import *
 from ai_clinician.preprocessing.utils import load_csv, load_intermediate_or_raw_csv
 
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
 class ChartEvents:
     """
     An object that manages a set of chart event tables, and 
@@ -145,7 +147,7 @@ if __name__ == '__main__':
     parser.add_argument('output_dir', type=str,
                         help='Directory in which to output (e.g. data/intermediates/patient_states)')
     parser.add_argument('--data', dest='data_dir', type=str, default=None,
-                        help='Directory in which raw and preprocessed data is stored (default is data/ directory)')
+                        help='Directory in which raw and preprocessed data is stored (default is ../data/ directory)')
     parser.add_argument('--window-before', dest='window_before', type=int, default=49,
                         help="Number of hours before sepsis onset to include data (default 49)")
     parser.add_argument('--window-after', dest='window_after', type=int, default=25,
@@ -156,9 +158,8 @@ if __name__ == '__main__':
                         help='Path to a CSV file containing an icustayid column; output will be filtered to these ICU stays')
 
     args = parser.parse_args()
-    base_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-    data_dir = args.data_dir or os.path.join(base_path, 'data')
-    out_dir = args.output_dir or os.path.join(base_path, 'data', 'intermediates', 'patient_states')
+    data_dir = args.data_dir or os.path.join(PARENT_DIR, 'data')
+    out_dir = args.output_dir or os.path.join(PARENT_DIR, 'data', 'intermediates', 'patient_states')
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
 

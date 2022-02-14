@@ -13,24 +13,7 @@ from ai_clinician.preprocessing.columns import RAW_DATA_COLUMNS, STAY_ID_OPTIONA
 
 DERIVED_DATASET_NAME = "derived_data"
 ELIXHAUSER_TABLE_NAME = "elixhauser_quan"
-
-# file_list = [
-#     'culture',
-#     'microbio',
-#     'abx',
-#     'demog',
-#     'ce',
-#     'comorbidities',
-#     'labs_ce',
-#     'labs_le',
-#     'uo',
-#     'preadm_uo',
-#     'fluid_mv',
-#     'preadm_fluid',
-#     'vaso_mv',
-#     'mechvent',
-#     'mechvent_pe'
-# ]
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 SQL_DIR = os.path.join(os.path.dirname(__file__), 'sql')
 
@@ -139,7 +122,7 @@ def main():
     parser.add_argument('--location', dest='dataset_location', type=str, default='US',
                         help='Location to create dataset if needed (default US)')
     parser.add_argument('--out', dest='output_dir', type=str, default=None,
-                        help='Directory in which to output (default is data directory)')
+                        help='Directory in which to output (default is ../data directory)')
     parser.add_argument('--skip-existing', dest='skip_existing', action='store_true', default=False,
                         help='If passed, skip existing CSV files')
     parser.add_argument('--auth-console', dest='launch_browser', action='store_false', default=True,
@@ -161,7 +144,7 @@ def main():
 
     elixhauser_table = generate_elixhauser_if_needed(bq_client, project, mimiciii=args.mimiciii, location=args.dataset_location)
     
-    out_dir = args.output_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'data', 'raw_data')
+    out_dir = args.output_dir or os.path.join(PARENT_DIR, 'data', 'raw_data')
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
     for file_name, fn in SQL_QUERY_FUNCTIONS.items():

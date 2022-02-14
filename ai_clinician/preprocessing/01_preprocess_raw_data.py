@@ -9,6 +9,8 @@ from ai_clinician.preprocessing.imputation import impute_icustay_ids
 
 tqdm.pandas()
 
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description=('Preprocesses chart and lab '
@@ -27,8 +29,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    in_dir = args.input_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'data', 'raw_data')
-    out_dir = args.output_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'data', 'intermediates')
+    in_dir = args.input_dir or os.path.join(PARENT_DIR, 'data', 'raw_data')
+    out_dir = args.output_dir or os.path.join(PARENT_DIR, 'data', 'intermediates')
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
 
@@ -114,13 +116,18 @@ if __name__ == '__main__':
     vaso_mv = vaso_mv[~pd.isna(vaso_mv[C_ICUSTAYID])]
     vaso_mv.to_csv(os.path.join(out_dir, "vaso_mv.csv"), index=False)
     
-    print("Correcting nans [vaso_cv]")
-    vaso_cv = load_csv(os.path.join(in_dir, 'vaso_cv.csv'), null_icustayid=True)
-    vaso_cv = vaso_cv[~pd.isna(vaso_cv[C_ICUSTAYID])]
-    vaso_cv.to_csv(os.path.join(out_dir, "vaso_cv.csv"), index=False)
+    try:
+        vaso_cv = load_csv(os.path.join(in_dir, 'vaso_cv.csv'), null_icustayid=True)
+        print("Correcting nans [vaso_cv]")
+        vaso_cv = vaso_cv[~pd.isna(vaso_cv[C_ICUSTAYID])]
+        vaso_cv.to_csv(os.path.join(out_dir, "vaso_cv.csv"), index=False)
+    except FileNotFoundError:
+        print("No vaso_cv file found, skipping")
     
-    print("Correcting nans [fluid_cv]")
-    fluid_cv = load_csv(os.path.join(in_dir, 'fluid_cv.csv'), null_icustayid=True)
-    fluid_cv = fluid_cv[~pd.isna(fluid_cv[C_ICUSTAYID])]
-    fluid_cv.to_csv(os.path.join(out_dir, "fluid_cv.csv"), index=False)
-    
+    try:
+        fluid_cv = load_csv(os.path.join(in_dir, 'fluid_cv.csv'), null_icustayid=True)
+        print("Correcting nans [fluid_cv]")
+        fluid_cv = fluid_cv[~pd.isna(fluid_cv[C_ICUSTAYID])]
+        fluid_cv.to_csv(os.path.join(out_dir, "fluid_cv.csv"), index=False)
+    except FileNotFoundError:
+        print("No fluid_cv file found, skipping")

@@ -6,6 +6,8 @@ from tqdm import tqdm
 from ai_clinician.preprocessing.columns import *
 from ai_clinician.preprocessing.utils import load_csv, load_intermediate_or_raw_csv
 
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
 def build_states_and_actions(df, qstime, inputMV, inputCV, inputpreadm, vasoMV, vasoCV, demog, UOpreadm, UO, timestep_resolution, winb4, winaft, head=None, allowed_stays=None):
     """
     Performs two tasks: bins the data into time intervals defined by 
@@ -210,7 +212,7 @@ if __name__ == '__main__':
     parser.add_argument('output', type=str,
                         help='CSV path to write output')
     parser.add_argument('--data', dest='data_dir', type=str, default=None,
-                        help='Directory in which raw and preprocessed data is stored (default is data/ directory)')
+                        help='Directory in which raw and preprocessed data is stored (default is ../data/ directory)')
     parser.add_argument('--resolution', dest='resolution', type=float, default=4.0,
                         help="Number of hours per binned timestep")
     parser.add_argument('--window-before', dest='window_before', type=int, default=49,
@@ -225,8 +227,7 @@ if __name__ == '__main__':
                         help='Path to a CSV file containing an icustayid column; output will be filtered to these ICU stays')
 
     args = parser.parse_args()
-    base_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-    data_dir = args.data_dir or os.path.join(base_path, 'data')
+    data_dir = args.data_dir or os.path.join(PARENT_DIR, 'data')
     if not os.path.exists(os.path.dirname(args.output)):
         os.mkdir(os.path.dirname(args.output))
 
