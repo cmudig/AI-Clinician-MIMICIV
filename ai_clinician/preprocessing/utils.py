@@ -2,16 +2,19 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
 import os
-from .columns import DTYPE_SPEC
+from ai_clinician.preprocessing.columns import C_ICUSTAYID, DTYPE_SPEC, STAY_ID_OPTIONAL_DTYPE_SPEC
 
-def load_csv(*file_paths, **kwargs):
+def load_csv(*file_paths, null_icustayid=False, **kwargs):
     """
     Attempts to load a data CSV from the file paths given, and returns the first
     one whose file path exists.
     """
     for path in file_paths:
         if os.path.exists(path):
-            return pd.read_csv(path, dtype=DTYPE_SPEC, **kwargs)
+            spec = DTYPE_SPEC
+            if null_icustayid:
+                spec = STAY_ID_OPTIONAL_DTYPE_SPEC
+            return pd.read_csv(path, dtype=spec, **kwargs)
     raise FileNotFoundError(", ".join(file_paths))
 
 def load_intermediate_or_raw_csv(data_dir, file_name):

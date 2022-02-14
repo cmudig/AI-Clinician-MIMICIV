@@ -1,2 +1,0 @@
-select m.subject_id, m.hadm_id, i.stay_id as icustay_id, UNIX_SECONDS(TIMESTAMP(m.charttime)) as charttime, UNIX_SECONDS(TIMESTAMP(m.chartdate)) as chartdate, test_itemid, spec_itemid, ab_itemid, interpretation
-from `physionet-data.mimic_hosp.microbiologyevents` m left OUTER JOIN `physionet-data.mimic_icu.icustays` i on m.subject_id=i.subject_id and m.hadm_id=i.hadm_id
