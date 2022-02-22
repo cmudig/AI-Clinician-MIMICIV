@@ -145,7 +145,7 @@ def build_states_and_actions(df, qstime, inputMV, inputCV, inputpreadm, vasoMV, 
             if vaso2 is not None:
                 v2 = vaso2.loc[(vaso2[C_CHARTTIME] >= t0) & (vaso2[C_CHARTTIME] <= t1), C_RATESTD]
             else:
-                v2 = pd.Series([])
+                v2 = pd.Series([], dtype=np.float64)
 
             if not ratev.loc[v].empty or not v2.empty:
                 all_vs = np.concatenate([ratev.loc[v].values, v2.values])

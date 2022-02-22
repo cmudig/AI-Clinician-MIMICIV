@@ -3,27 +3,15 @@ import pandas as pd
 import tqdm
 import argparse
 import os
+from ai_clinician.modeling.normalization import DataNormalization
 from ai_clinician.preprocessing.utils import load_csv
 from ai_clinician.preprocessing.columns import *
-from .columns import *
+from ai_clinician.modeling.columns import *
 from scipy.stats import zscore
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 tqdm.tqdm.pandas()
-
-def preprocess_normalized_data(MIMICzs):
-    """Performs ad-hoc normalization on the normalized variables."""
-    
-    MIMICzs[pd.isna(MIMICzs)] = 0
-    MIMICzs[C_MAX_DOSE_VASO] = np.log(MIMICzs[C_MAX_DOSE_VASO] + 6)   # MAX DOSE NORAD 
-    MIMICzs[C_INPUT_STEP] = 2 * MIMICzs[C_INPUT_STEP]   # increase weight of this variable
-    return MIMICzs
-
-def clip_and_log_transform(data, log_gamma=0.1):
-    """Performs a log transform log(gamma + x), and clips x values less than zero to zero."""
-    print("Clipping log columns with values less than zero at proportions:", (data < 0).mean())
-    return np.log(log_gamma + np.clip(data, 0, None))
 
 def save_data_files(dir, MIMICraw, MIMICzs, metadata):
     MIMICraw.to_csv(os.path.join(dir, "MIMICraw.csv"), index=False)
@@ -71,18 +59,9 @@ if __name__ == '__main__':
 
     print("Proportion of NA values:", MIMICraw.isna().sum() / len(MIMICraw))
 
-    no_norm_scores = MIMICtable[AS_IS_COLUMNS].astype(np.float64).values - 0.5
-    scores_to_norm = np.hstack([MIMICtable[NORM_COLUMNS].astype(np.float64).values,
-                                clip_and_log_transform(MIMICtable[LOG_NORM_COLUMNS])])
-    scaler = StandardScaler()
-    
-    normed_train = scaler.fit_transform(scores_to_norm[train_indexes])
-    normed_test = scaler.transform(scores_to_norm[test_indexes])
-    
-    MIMICzs_train = pd.DataFrame(np.hstack([no_norm_scores[train_indexes], normed_train]), columns=ALL_FEATURE_COLUMNS)
-    MIMICzs_train = preprocess_normalized_data(MIMICzs_train)
-    MIMICzs_test = pd.DataFrame(np.hstack([no_norm_scores[test_indexes], normed_test]), columns=ALL_FEATURE_COLUMNS)
-    MIMICzs_test = preprocess_normalized_data(MIMICzs_test)
+    normer = DataNormalization(MIMICtable.iloc[train_indexes])
+    MIMICzs_train = normer.transform(MIMICtable.iloc[train_indexes])
+    MIMICzs_test = normer.transform(MIMICtable.iloc[test_indexes])
 
     train_dir = os.path.join(out_dir, "train")
     test_dir = os.path.join(out_dir, "test")
@@ -95,6 +74,7 @@ if __name__ == '__main__':
     
     # Save files
     print("Saving files")
+    normer.save(os.path.join(out_dir, 'normalization.pkl'))
     save_data_files(train_dir,
                     MIMICraw.iloc[train_indexes],
                     MIMICzs_train,
