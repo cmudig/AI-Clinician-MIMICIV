@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-from .columns import *
+from ai_clinician.preprocessing.columns import *
 
 def calculate_onset(abx, bacterio, stay_id):
     matching_abs = abx.loc[abx[C_ICUSTAYID] == stay_id, C_STARTDATE].reset_index(drop=True).sort_values()

@@ -4,10 +4,12 @@ import os
 import argparse
 from tqdm import tqdm
 
-from preprocessing.provenance import ProvenanceWriter
-from preprocessing.columns import *
-from preprocessing.utils import load_csv
-from preprocessing.imputation import fill_outliers, fill_stepwise, sample_and_hold
+from ai_clinician.preprocessing.provenance import ProvenanceWriter
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.preprocessing.utils import load_csv
+from ai_clinician.preprocessing.imputation import fill_outliers, fill_stepwise, sample_and_hold
+
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 def remove_outliers(df, provenance=None):
     # Transfer temperatures tagged as celsius but obviously fahrenheit
@@ -257,7 +259,7 @@ if __name__ == '__main__':
     parser.add_argument('output', type=str,
                         help='Path at which to write output')
     parser.add_argument('--data', dest='data_dir', type=str, default=None,
-                        help='Directory in which raw and preprocessed data is stored (default is data/ directory)')
+                        help='Directory in which raw and preprocessed data is stored (default is ../data/ directory)')
     parser.add_argument('--no-outliers', dest='outliers', default=True, action='store_false',
                         help="Don't replace outliers with NaNs")
     parser.add_argument('--no-fio2', dest='fio2', default=True, action='store_false',
@@ -274,8 +276,7 @@ if __name__ == '__main__':
                         help="Path to directory in which to write provenance files (indicating sources and reasons for all changes)")
     
     args = parser.parse_args()
-    base_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-    data_dir = args.data_dir or os.path.join(base_path, 'data')
+    data_dir = args.data_dir or os.path.join(PARENT_DIR, 'data')
 
     df = load_csv(args.input)
     old_df = df.copy() if args.mask_file else None

@@ -6,10 +6,10 @@ import os
 import shutil
 from ai_clinician.preprocessing.utils import load_csv
 from ai_clinician.preprocessing.columns import *
-from .models.ai_clinician import AIClinicianModel
-from .models.common import *
-from .models.dqn import DuelingDQNModel
-from .columns import C_OUTCOME
+from ai_clinician.modeling.models.ai_clinician import AIClinicianModel
+from ai_clinician.modeling.models.common import *
+from ai_clinician.modeling.models.dqn import DuelingDQNModel
+from ai_clinician.modeling.columns import C_OUTCOME
 from sklearn.model_selection import train_test_split
 
 tqdm.tqdm.pandas()

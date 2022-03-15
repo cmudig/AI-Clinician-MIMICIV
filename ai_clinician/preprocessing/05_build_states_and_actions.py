@@ -3,14 +3,18 @@ import numpy as np
 import os
 import argparse
 from tqdm import tqdm
-from preprocessing.columns import *
-from preprocessing.utils import load_csv, load_intermediate_or_raw_csv
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.preprocessing.utils import load_csv, load_intermediate_or_raw_csv
 
-def build_states_and_actions(df, qstime, inputMV, inputpreadm, vasoMV, demog, UOpreadm, UO, timestep_resolution, winb4, winaft, head=None, allowed_stays=None):
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
+def build_states_and_actions(df, qstime, inputMV, inputCV, inputpreadm, vasoMV, vasoCV, demog, UOpreadm, UO, timestep_resolution, winb4, winaft, head=None, allowed_stays=None):
     """
     Performs two tasks: bins the data into time intervals defined by 
     timestep_resolution, and adds input and output information (vasopressors,
     fluids, and urine output).
+    
+    inputCV and vasoCV may be None if using MIMIC-IV (contains MetaVision only).
     """
     icustayidlist = np.unique(df[C_ICUSTAYID])
     icustayidlist = sorted(icustayidlist[~pd.isna(icustayidlist)])
@@ -37,6 +41,10 @@ def build_states_and_actions(df, qstime, inputMV, inputpreadm, vasoMV, demog, UO
 
         # IV FLUID STUFF
         input = inputMV.loc[inputMV[C_ICUSTAYID] == icustayid, :]  # subset of interest
+        if inputCV is not None:
+            input2 = inputCV.loc[inputCV[C_ICUSTAYID] == icustayid, :]  # subset of interest
+        else:
+            input2 = None
         startt = input[C_STARTTIME]  # start of all infusions and boluses
         endt = input[C_ENDTIME]  # end of all infusions and boluses
         rate = input[C_NORM_INFUSION_RATE]  # normalized rate of infusion (is NaN for boluses) || corrected for tonicity
@@ -56,11 +64,20 @@ def build_states_and_actions(df, qstime, inputMV, inputpreadm, vasoMV, demog, UO
                         rate * (t1 - startt) * ((startt >= t0) & (endt >= t1) & (startt <= t1)) / 3600 +
                         rate * (t1 - t0) * ((endt >= t1) & (startt <= t0)) / 3600)
         # all boluses received during this timestep, from inputMV (rate is always NaN for boluses)
-        bolus = np.nansum(input.loc[pd.isna(input[C_RATE]) & (input[C_STARTTIME] >= t0) & (input[C_STARTTIME] <= t1), C_TEV])
+        bolusMV = np.nansum(input.loc[pd.isna(input[C_RATE]) & (input[C_STARTTIME] >= t0) & (input[C_STARTTIME] <= t1), C_TEV])
+        if input2 is not None:
+            bolusCV = np.nansum(input2.loc[(input2[C_CHARTTIME] >= t0) & (input2[C_CHARTTIME] <= t1), C_TEV])
+            bolus = bolusMV + bolusCV
+        else:
+            bolus = bolusMV
         totvol = np.nansum([totvol, infu, bolus])
 
         # VASOPRESSORS
         vaso1 = vasoMV.loc[vasoMV[C_ICUSTAYID] == icustayid, :]  # subset of interest
+        if vasoCV is not None:
+            vaso2 = vasoCV.loc[vasoCV[C_ICUSTAYID] == icustayid, :]  # subset of interest
+        else:
+            vaso2 = None
         startv = vaso1[C_STARTTIME]  # start of VP infusion
         endv = vaso1[C_ENDTIME]  # end of VP infusions
         ratev = vaso1[C_RATESTD]  # rate of VP infusion
@@ -125,13 +142,17 @@ def build_states_and_actions(df, qstime, inputMV, inputpreadm, vasoMV, demog, UO
             # MV
             v = (((endv >= t0) & (endv <= t1)) | ((startv >= t0) & (endv <= t1)) |
                 ((startv >= t0) & (startv <= t1)) | ((startv <= t0) & (endv >= t1)))
+            if vaso2 is not None:
+                v2 = vaso2.loc[(vaso2[C_CHARTTIME] >= t0) & (vaso2[C_CHARTTIME] <= t1), C_RATESTD]
+            else:
+                v2 = pd.Series([], dtype=np.float64)
 
-            if not ratev.loc[v].empty:
-                v1 = ratev.loc[v].median(skipna=True)
-                v2 = ratev.loc[v].max(skipna=True)
-                if not pd.isna(v1) and not pd.isna(v2):
-                    item[C_MEDIAN_DOSE_VASO] = v1
-                    item[C_MAX_DOSE_VASO] = v2
+            if not ratev.loc[v].empty or not v2.empty:
+                all_vs = np.concatenate([ratev.loc[v].values, v2.values])
+                all_vs = all_vs[~np.isnan(all_vs)]
+                if all_vs.size > 0:
+                    item[C_MEDIAN_DOSE_VASO] = np.nanmedian(all_vs)
+                    item[C_MAX_DOSE_VASO] = np.nanmax(all_vs)
 
             # INPUT FLUID
             # input from MV (4 ways to compute)
@@ -140,7 +161,13 @@ def build_states_and_actions(df, qstime, inputMV, inputpreadm, vasoMV, demog, UO
                             rate * (t1 - startt) * ((startt >= t0) & (endt >= t1) & (startt <= t1)) / 3600 +
                             rate * (t1 - t0) * ((endt >= t1) & (startt <= t0)) / 3600)
             # all boluses received during this timestep, from inputMV (need to check rate is NaN) and inputCV (simpler):
-            bolus = np.nansum(input.loc[pd.isna(input[C_RATE]) & (input[C_STARTTIME] >= t0) & (input[C_STARTTIME] <= t1), C_TEV])
+            bolusMV = np.nansum(input.loc[pd.isna(input[C_RATE]) & (input[C_STARTTIME] >= t0) & (input[C_STARTTIME] <= t1), C_TEV])
+            if input2 is not None:
+                bolusCV = np.nansum(input2.loc[(input2[C_CHARTTIME] >= t0) & (input2[C_CHARTTIME] <= t1), C_TEV])
+                bolus = bolusMV + bolusCV
+            else:
+                bolus = bolusMV
+            
             # sum fluid given
             totvol = np.nansum([totvol, infu, bolus])
             item[C_INPUT_TOTAL] = totvol # total fluid
@@ -185,7 +212,7 @@ if __name__ == '__main__':
     parser.add_argument('output', type=str,
                         help='CSV path to write output')
     parser.add_argument('--data', dest='data_dir', type=str, default=None,
-                        help='Directory in which raw and preprocessed data is stored (default is data/ directory)')
+                        help='Directory in which raw and preprocessed data is stored (default is ../data/ directory)')
     parser.add_argument('--resolution', dest='resolution', type=float, default=4.0,
                         help="Number of hours per binned timestep")
     parser.add_argument('--window-before', dest='window_before', type=int, default=49,
@@ -200,8 +227,7 @@ if __name__ == '__main__':
                         help='Path to a CSV file containing an icustayid column; output will be filtered to these ICU stays')
 
     args = parser.parse_args()
-    base_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-    data_dir = args.data_dir or os.path.join(base_path, 'data')
+    data_dir = args.data_dir or os.path.join(PARENT_DIR, 'data')
     if not os.path.exists(os.path.dirname(args.output)):
         os.mkdir(os.path.dirname(args.output))
 
@@ -215,6 +241,14 @@ if __name__ == '__main__':
     inputpreadm = load_intermediate_or_raw_csv(data_dir, 'preadm_fluid.csv')
     inputMV = load_intermediate_or_raw_csv(data_dir, 'fluid_mv.csv')
     vasoMV = load_intermediate_or_raw_csv(data_dir, 'vaso_mv.csv')
+    try:
+        inputCV = load_intermediate_or_raw_csv(data_dir, 'fluid_cv.csv')
+    except FileNotFoundError:
+        inputCV = None
+    try:
+        vasoCV = load_intermediate_or_raw_csv(data_dir, 'vaso_cv.csv')
+    except FileNotFoundError:
+        vasoCV = None
     UOpreadm = load_intermediate_or_raw_csv(data_dir, 'preadm_uo.csv')
     UO = load_intermediate_or_raw_csv(data_dir, 'uo.csv')
     
@@ -228,8 +262,10 @@ if __name__ == '__main__':
         df,
         qstime,
         inputMV,
+        inputCV,
         inputpreadm,
         vasoMV,
+        vasoCV,
         demog,
         UOpreadm,
         UO,

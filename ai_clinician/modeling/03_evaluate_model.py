@@ -5,9 +5,9 @@ import argparse
 import os
 import shutil
 import pickle
-from .models.ai_clinician import *
-from .models.common import *
-from .columns import C_OUTCOME
+from ai_clinician.modeling.models.ai_clinician import *
+from ai_clinician.modeling.models.common import *
+from ai_clinician.modeling.columns import C_OUTCOME
 from ai_clinician.preprocessing.utils import load_csv
 from ai_clinician.preprocessing.columns import *
 from sklearn.model_selection import train_test_split
