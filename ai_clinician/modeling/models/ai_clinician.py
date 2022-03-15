@@ -120,21 +120,24 @@ class AIClinicianModel(BaseModel):
             return probs[np.arange(len(actions)), actions]
         return probs
     
-    def compute_physician_probabilities(self, X=None, states=None, actions=None):
+    def compute_physician_probabilities(self, X=None, states=None, actions=None, soften=True):
         """
         Returns the probabilities for each state and action according to the
         physician policy, which is learned using the same state clustering model
         as the AI Clinician.
         """
         assert X is not None or states is not None, "At least one of states or X must not be None"
-        soft_physpol = self.physician_policy.copy() # behavior policy = clinicians'
+        if soften:
+            soft_physpol = self.physician_policy.copy() # behavior policy = clinicians'
 
-        for i in range(self.n_cluster_states):
-            ii = soft_physpol[i,:] == 0
-            z = self.soften_factor / ii.sum()
-            coef = soft_physpol[i,~ii].sum()
-            soft_physpol[i, ii] = z
-            soft_physpol[i, ~ii] = soft_physpol[i,~ii] * (1 - self.soften_factor / coef)
+            for i in range(self.n_cluster_states):
+                ii = soft_physpol[i,:] == 0
+                z = self.soften_factor / ii.sum()
+                coef = soft_physpol[i,~ii].sum()
+                soft_physpol[i, ii] = z
+                soft_physpol[i, ~ii] = soft_physpol[i,~ii] * (1 - self.soften_factor / coef)
+        else:
+            soft_physpol = self.physician_policy
 
         if states is None:
             states = self.compute_states(X)

@@ -14,4 +14,6 @@ setup(name=pkg_name,
           'matplotlib>=3.3.4',
           'google-auth-oauthlib>=0.4.6',
           'google-cloud-bigquery>=2.30.1',
+          'pyarrow>=6.0.0',
+          'numba>=0.53.0',
       ])

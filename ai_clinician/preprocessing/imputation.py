@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
-from .columns import *
+from ai_clinician.preprocessing.columns import *
 import tqdm
 from sklearn.impute import KNNImputer
 from sklearn.metrics import pairwise_distances

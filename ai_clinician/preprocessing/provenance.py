@@ -8,7 +8,7 @@ import itertools
 import re
 import tqdm
 
-from preprocessing.utils import reverse_readline
+from ai_clinician.preprocessing.utils import reverse_readline
 
 VALUE_ROW = "value_row"
 VALUE_COL = "value_col"

@@ -7,59 +7,44 @@ import argparse
 from google_auth_oauthlib import flow
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
+from ai_clinician.data_extraction.sql.queries import SQL_QUERY_FUNCTIONS
 
-from ai_clinician.preprocessing.columns import RAW_DATA_COLUMNS
+from ai_clinician.preprocessing.columns import RAW_DATA_COLUMNS, STAY_ID_OPTIONAL_DTYPE_SPEC
 
 DERIVED_DATASET_NAME = "derived_data"
 ELIXHAUSER_TABLE_NAME = "elixhauser_quan"
-
-file_list = [
-    'culture',
-    'microbio',
-    'abx',
-    'demog',
-    'ce',
-    'comorbidities',
-    'labs_ce',
-    'labs_le',
-    'uo',
-    'preadm_uo',
-    'fluid_mv',
-    'preadm_fluid',
-    'vaso_mv',
-    'mechvent',
-    'mechvent_pe'
-]
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 SQL_DIR = os.path.join(os.path.dirname(__file__), 'sql')
 
-def load_data(bq_client, elixhauser_table, file_name, output_dir, skip_if_present=False):
+def load_data(bq_client, elixhauser_table, file_name, query_fn, output_dir, mimiciii=False, skip_if_present=False):
     """
     Loads data from BigQuery using the SQL query given by the file name. For
     ce (chartevents), loads data in 10 chunks to save time.
     """
 
-    with open(os.path.join(SQL_DIR, file_name + '.sql'), 'r') as f:
-        query = f.read()
-
     if file_name == 'ce':
         # Read in batches of size id_step going up to id_max, where the
         # actual ID numbers are offset by id_conversion
-        id_step = int(1e6)
-        id_max = int(1e7)
-        id_conversion = int(3e7)
+        id_step = int(1e4) if mimiciii else int(1e6)
+        id_max = int(1e5) if mimiciii else int(1e7)
+        id_conversion = 200000 if mimiciii else int(3e7)
         for i in range(0, id_max, id_step):
             out_path = os.path.join(output_dir, file_name + str(i) + str(i + id_step) + '.csv')
             if skip_if_present and os.path.exists(out_path):
                 print('file exists, skipping')
-                return
+                continue
             
-            query_ = query.format(id_conversion + i, id_conversion + id_step + i)
+            query_ = query_fn(id_conversion + i, id_conversion + id_step + i, mimiciii=mimiciii)
+            print(query_)
             query_result = bq_client.query(query_)
 
             result = pd.DataFrame([dict(zip(range(len(result)), result))
                                    for result in tqdm.tqdm(query_result, desc=file_name + str(i) + str(i + id_step))])
             result.columns = RAW_DATA_COLUMNS['ce']
+            for col in result.columns:
+                if col in STAY_ID_OPTIONAL_DTYPE_SPEC:
+                    result[col] = result[col].astype(STAY_ID_OPTIONAL_DTYPE_SPEC[col])
             result.to_csv(out_path, index=False)
         return
     
@@ -70,19 +55,29 @@ def load_data(bq_client, elixhauser_table, file_name, output_dir, skip_if_presen
     
     if file_name in ('demog', 'comorbidities'):
         # Sub in the elixhauser table name
-        query = query.format(elixhauser_table)
+        query = query_fn(elixhauser_table, mimiciii=mimiciii)
+    else:
+        query = query_fn(mimiciii=mimiciii)
+    if not query: return
+    print(query)
     query_result = bq_client.query(query)
 
     result = pd.DataFrame([dict(zip(range(len(result)), result))
                            for result in tqdm.tqdm(query_result, desc=file_name)])
     result.columns = RAW_DATA_COLUMNS[file_name]
+    for col in result.columns:
+        if col in STAY_ID_OPTIONAL_DTYPE_SPEC:
+            result[col] = result[col].astype(STAY_ID_OPTIONAL_DTYPE_SPEC[col])
     result.to_csv(out_path, index=False)
 
-def generate_elixhauser_if_needed(bq_client, gcp_project, location="US"):
+def generate_elixhauser_if_needed(bq_client, gcp_project, mimiciii=False, location="US"):
     """
     Retrieves the Elixhauser-Quan table from BigQuery, or creates it if it is
     not found.
     """
+    if mimiciii:
+        return 'physionet-data.mimiciii_derived.elixhauser_quan'
+    
     table_id = '.'.join([gcp_project, DERIVED_DATASET_NAME, ELIXHAUSER_TABLE_NAME])
     
     try:
@@ -122,10 +117,12 @@ def main():
         'there if it is not found.'))
     parser.add_argument('secret', type=str, help='Path to BigQuery client secret')
     parser.add_argument('gcp_project', type=str, help='Name of the project within GCP that will be authenticated')
+    parser.add_argument('--mimiciii', dest='mimiciii', default=False, action='store_true',
+                        help='If passed, extract MIMIC-III data instead of MIMIC-IV')
     parser.add_argument('--location', dest='dataset_location', type=str, default='US',
                         help='Location to create dataset if needed (default US)')
     parser.add_argument('--out', dest='output_dir', type=str, default=None,
-                        help='Directory in which to output (default is data directory)')
+                        help='Directory in which to output (default is ../data directory)')
     parser.add_argument('--skip-existing', dest='skip_existing', action='store_true', default=False,
                         help='If passed, skip existing CSV files')
     parser.add_argument('--auth-console', dest='launch_browser', action='store_false', default=True,
@@ -145,14 +142,14 @@ def main():
     credentials = appflow.credentials
     bq_client = bigquery.Client(project=project, credentials=credentials)
 
-    elixhauser_table = generate_elixhauser_if_needed(bq_client, project, location=args.dataset_location)
+    elixhauser_table = generate_elixhauser_if_needed(bq_client, project, mimiciii=args.mimiciii, location=args.dataset_location)
     
-    out_dir = args.output_dir or os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'data', 'raw_data')
+    out_dir = args.output_dir or os.path.join(PARENT_DIR, 'data', 'raw_data')
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
-    for i, file_name in enumerate(file_list):
-        load_data(bq_client, elixhauser_table, file_name, out_dir, skip_if_present=args.skip_existing)
-        print(str(i + 1) + '/' + str(len(file_list)))
+    for file_name, fn in SQL_QUERY_FUNCTIONS.items():
+        print(file_name)
+        load_data(bq_client, elixhauser_table, file_name, fn, out_dir, mimiciii=args.mimiciii, skip_if_present=args.skip_existing)
 
 if __name__ == '__main__':
     main()

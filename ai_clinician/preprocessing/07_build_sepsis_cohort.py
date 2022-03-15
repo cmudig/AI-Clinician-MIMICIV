@@ -2,9 +2,11 @@ import pandas as pd
 import numpy as np
 import os
 import argparse
-from tqdm import tqdm
-from preprocessing.columns import *
-from preprocessing.utils import load_csv
+import tqdm
+from ai_clinician.preprocessing.columns import *
+from ai_clinician.preprocessing.utils import load_csv
+
+PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 def outlier_stay_ids(df):
     """Returns a list of ICU stay IDs that should be removed from the dataset."""
@@ -67,13 +69,12 @@ if __name__ == '__main__':
     parser.add_argument('output', type=str,
                         help='Directory in which to write output')
     parser.add_argument('--data', dest='data_dir', type=str, default=None,
-                        help='Directory in which raw and preprocessed data is stored (default is data/ directory)')
+                        help='Directory in which raw and preprocessed data is stored (default is ../data/ directory)')
     parser.add_argument('--no-outlier-exclusion', dest='outlier_exclusion', default=True, action='store_false',
                         help="Don't exclude outliers by lab values")
     
     args = parser.parse_args()
-    base_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-    data_dir = args.data_dir or os.path.join(base_path, 'data')
+    data_dir = args.data_dir or os.path.join(PARENT_DIR, 'data')
     out_dir = args.output
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
