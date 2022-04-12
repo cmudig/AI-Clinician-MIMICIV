@@ -53,6 +53,16 @@ def transform_actions(input_amounts, vaso_doses, cutoffs):
         (np.digitize(vaso_doses, vaso_cutoffs) - 1)
     )
 
+def shift_actions(metadata, actions):
+    """
+    Shifts the actions backward so that each row provides the *next* action for
+    the given state. Actions for the last observed state in each trajectory
+    are set to -1.
+    """
+    new_actions = np.concatenate([actions[1:], np.array([-1])])
+    new_actions[np.argwhere(metadata[C_BLOC].values == 1).flatten() - 1] = -1
+    return new_actions
+    
 def build_complete_record_sequences(metadata, states, actions, absorbing_states, reward_values):
     """
     Builds a dataframe of timestepped records, adding a bloc at the end of each
@@ -65,15 +75,7 @@ def build_complete_record_sequences(metadata, states, actions, absorbing_states,
     
     qldata3 = []
     for i in range(len(blocs)):
-        qldata3.append({
-            C_BLOC: blocs[i],
-            C_ICUSTAYID: stay_ids[i],
-            C_STATE: states[i],
-            C_ACTION: actions[i],
-            C_OUTCOME: outcomes[i],
-            C_REWARD: 0
-        })
-        if i < len(blocs) - 1 and blocs[i + 1] == 1: # end of trace for this patient (next bloc is 1 for the next patient)
+        if i == len(blocs) - 1 or blocs[i + 1] == 1: # end of trace for this patient (next bloc is 1 for the next patient)
             qldata3.append({
                 C_BLOC: blocs[i] + 1,
                 C_ICUSTAYID: stay_ids[i],
@@ -81,6 +83,15 @@ def build_complete_record_sequences(metadata, states, actions, absorbing_states,
                 C_ACTION: -1,
                 C_OUTCOME: int(outcomes[i]),
                 C_REWARD: reward_values[int(outcomes[i])]
+            })
+        else:
+            qldata3.append({
+                C_BLOC: blocs[i],
+                C_ICUSTAYID: stay_ids[i],
+                C_STATE: states[i],
+                C_ACTION: actions[i + 1],
+                C_OUTCOME: outcomes[i],
+                C_REWARD: 0
             })
     return pd.DataFrame(qldata3)
 
