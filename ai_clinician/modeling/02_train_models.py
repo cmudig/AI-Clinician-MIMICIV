@@ -6,7 +6,7 @@ import os
 import shutil
 from ai_clinician.preprocessing.utils import load_csv
 from ai_clinician.preprocessing.columns import *
-from ai_clinician.modeling.models.ai_clinician import AIClinicianModel
+from ai_clinician.modeling.models.komorowski_model import AIClinicianModel
 from ai_clinician.modeling.models.common import *
 from ai_clinician.modeling.models.dqn import DuelingDQNModel
 from ai_clinician.modeling.columns import C_OUTCOME

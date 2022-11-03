@@ -5,7 +5,7 @@ import argparse
 import os
 import shutil
 import pickle
-from ai_clinician.modeling.models.ai_clinician import *
+from ai_clinician.modeling.models.komorowski_model import *
 from ai_clinician.modeling.models.common import *
 from ai_clinician.modeling.columns import C_OUTCOME
 from ai_clinician.preprocessing.utils import load_csv

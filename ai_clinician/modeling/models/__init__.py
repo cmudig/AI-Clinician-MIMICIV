@@ -1,1 +1,1 @@
-from .ai_clinician import AIClinicianModel
+from .komorowski_model import AIClinicianModel

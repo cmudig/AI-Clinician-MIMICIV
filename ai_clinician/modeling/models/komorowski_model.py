@@ -103,7 +103,8 @@ class AIClinicianModel(BaseModel):
 
         if actions is not None:
             assert len(actions) == len(states)
-            return self.Q[states, actions]
+            # Add a column of zeros at the end for the '-1' action (no action recorded)
+            return np.hstack([self.Q, np.zeros(self.Q.shape[0]).reshape(-1, 1)])[states, actions]
         return self.Q[states]
     
     def compute_V(self, X):
@@ -117,7 +118,8 @@ class AIClinicianModel(BaseModel):
                          1 - self.soften_factor,
                          self.soften_factor / (self.n_actions - 1))
         if actions is not None:
-            return probs[np.arange(len(actions)), actions]
+            # Add a column of zeros at the end for the '-1' action (no action recorded)
+            return np.hstack([probs, np.zeros(probs.shape[0]).reshape(-1, 1)])[np.arange(len(actions)), actions]
         return probs
     
     def compute_physician_probabilities(self, X=None, states=None, actions=None, soften=True):
@@ -125,6 +127,9 @@ class AIClinicianModel(BaseModel):
         Returns the probabilities for each state and action according to the
         physician policy, which is learned using the same state clustering model
         as the AI Clinician.
+        
+        If actions is provided, any values where the action is -1 will result in
+        a zero probability.
         """
         assert X is not None or states is not None, "At least one of states or X must not be None"
         if soften:
@@ -143,7 +148,8 @@ class AIClinicianModel(BaseModel):
             states = self.compute_states(X)
         probs = soft_physpol[states]
         if actions is not None:
-            return probs[np.arange(len(actions)), actions]
+            # Add a column of zeros at the end for the '-1' action (no action recorded)
+            return np.hstack([probs, np.zeros(probs.shape[0]).reshape(-1, 1)])[np.arange(len(actions)), actions]
         return probs
         
     def save(self, filepath, metadata=None):
