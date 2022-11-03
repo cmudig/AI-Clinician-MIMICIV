@@ -77,7 +77,7 @@ def build_complete_record_sequences(metadata, states, actions, absorbing_states,
     for i in range(len(blocs)):
         if i == len(blocs) - 1 or blocs[i + 1] == 1: # end of trace for this patient (next bloc is 1 for the next patient)
             qldata3.append({
-                C_BLOC: blocs[i] + 1,
+                C_BLOC: blocs[i],
                 C_ICUSTAYID: stay_ids[i],
                 C_STATE: absorbing_states[int(outcomes[i])],
                 C_ACTION: -1,
