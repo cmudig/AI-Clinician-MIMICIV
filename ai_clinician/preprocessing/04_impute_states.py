@@ -25,20 +25,31 @@ def remove_outliers(df, provenance=None):
 
     df = fill_outliers(df, {
         # Vitals
-        C_WEIGHT: (None, 300),      # weight
+        C_HEIGHT: (0, 250), 
+        C_WEIGHT: (0, 300),      # weight
         C_HR: (None, 250),      # HR
         C_SYSBP: (0, 300),         # BP
         C_MEANBP: (0, 200),
         C_DIABP: (0, 200),
         C_RR: (None, 80),      # RR
-        C_SPO2: (None, 150),     # SpO2
-        C_TEMP_C: (None, 90),      # temp
-        C_FIO2_100: (20, None),      # FiO2
-        C_FIO2_1: (None, 1.5),
+        C_SPO2: (80, 150),     # SpO2
+        C_TEMP_C: (15, 90),      # temp
+        C_TEMP_F: (70, 300),      # temp
+        C_FIO2_100: (20, 100),      # FiO2
+        C_FIO2_1: (None, 1),
         C_O2FLOW: (None, 70),      # O2 flow
         C_PEEP: (0, 40),         # PEEP
-        C_TIDALVOLUME: (None, 1800),    # Tidal volume
+        C_TIDALVOLUME: (None, 1000),    # Tidal volume
         C_MINUTEVENTIL: (None, 50),      # Minute volume
+        
+        C_CVP: (0, 100),
+        C_PAPSYS: (0, 75),
+        C_PAPMEAN: (0, 75),
+        C_PAPDIA: (0, 75),
+        C_CI: (0, 10),
+        C_PAWMEAN: (0, 100),
+        C_PAWPEAK: (0, 100),
+        C_PAWPLATEAU: (0, 100),
         
         # Labs
         C_POTASSIUM: (1, 15),         # K+
@@ -50,18 +61,29 @@ def remove_outliers(df, provenance=None):
         C_CALCIUM: (None, 20),      # Ca
         C_IONISED_CA: (None, 5),       # ionized Ca
         C_CO2_MEQL: (None, 120),     # CO2
-        C_SGPT: (None, 10000),   # SGPT
-        C_SGOT: (None, 10000),   # SGOT
+        C_SGPT: (None, 1000),   # SGPT
+        C_SGOT: (None, 1000),   # SGOT
+        C_BUN: (None, 200),
+        C_CREATININE: (0, 10),
+        C_TROPONIN: (0, 50),
+        
+        C_TOTAL_BILI: (None, 100),
+        C_DIRECT_BILI: (None, 100),
+        C_ALBUMIN: (0, 10),
+        C_WBC_COUNT: (None, 100),
         C_HB: (None, 20),      # hemoglobin
         C_HT: (None, 65),      # hematocrit
-        C_WBC_COUNT: (None, 500),     # WBC
+        C_WBC_COUNT: (None, 300),     # WBC
         C_PLATELETS_COUNT: (None, 2000),    # platelet
         C_INR: (None, 20),      # INR
         C_ARTERIAL_PH: (6.7, 8),        # pH
         C_PAO2: (None, 700),     # PO2
         C_PACO2: (None, 200),     # PCO2
-        C_ARTERIAL_BE: (-50, None),     # base excess
-        C_ARTERIAL_LACTATE: (None, 30),      # lactate
+        C_HCO3: (0, 100),
+        C_PT: (0, 200),
+        C_PTT: (0, 200),
+        C_ARTERIAL_BE: (-50, 50),     # base excess
+        C_ARTERIAL_LACTATE: (0, 30),      # lactate
     }, provenance=provenance)
 
     # Clamp SpO2 to 100 after removing outliers

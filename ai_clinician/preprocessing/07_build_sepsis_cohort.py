@@ -4,7 +4,7 @@ import os
 import argparse
 import tqdm
 from ai_clinician.preprocessing.columns import *
-from ai_clinician.preprocessing.utils import load_csv
+from ai_clinician.preprocessing.utils import load_csv, load_intermediate_or_raw_csv
 
 PARENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
@@ -83,6 +83,12 @@ if __name__ == '__main__':
     qstime = load_csv(args.qstime)
     qstime = qstime.set_index(C_ICUSTAYID, drop=True)
     
+    # Add in death date information (could move this earlier in the pipeline)
+    demog = load_intermediate_or_raw_csv(data_dir, 'demog.csv')
+    df = pd.merge(df, demog[[C_ICUSTAYID, C_DOD]], how='left', on=C_ICUSTAYID)
+    df = pd.merge(df, qstime[[C_DISCHTIME]], how='left', left_on=C_ICUSTAYID, right_index=True)
+    df[C_DOD_DISCH_DELTA] = df[C_DOD] - df[C_DISCHTIME]
+    
     print("Before filtering:", len(set(df[C_ICUSTAYID])), "ICU stays")  # count before
 
     if args.outlier_exclusion:
@@ -95,8 +101,8 @@ if __name__ == '__main__':
     df = df[~df[C_ICUSTAYID].isin(stopped_treatment)]
 
     died_in_icu = died_in_icu_stay_ids(df)    
-    print(len(died_in_icu), "patients to remove because died in ICU during data collection")
-    df = df[~df[C_ICUSTAYID].isin(died_in_icu)]
+    print(len(died_in_icu), "patients NOT removing because died in ICU during data collection")
+    # df = df[~df[C_ICUSTAYID].isin(died_in_icu)]
 
     print("After filtering:", len(set(df[C_ICUSTAYID])), "ICU stays")  # count after
 
@@ -104,6 +110,7 @@ if __name__ == '__main__':
         C_MORTA_90: 'first',
         C_SOFA: 'max',
         C_SIRS: 'max',
+        C_DOD_DISCH_DELTA: 'first'
     }).rename({
         C_SOFA: C_MAX_SOFA,
         C_SIRS: C_MAX_SIRS,

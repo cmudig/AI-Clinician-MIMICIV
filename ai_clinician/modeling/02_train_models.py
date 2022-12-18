@@ -4,6 +4,7 @@ import tqdm
 import argparse
 import os
 import shutil
+import pickle
 from ai_clinician.preprocessing.utils import load_csv
 from ai_clinician.preprocessing.columns import *
 from ai_clinician.modeling.models.komorowski_model import AIClinicianModel
@@ -86,6 +87,10 @@ if __name__ == '__main__':
     min_wis_lb = 1e9 # Also save the worst model
     
     model_type = args.model_type
+    
+    mortality_counts_train = []
+    mortality_counts_val = []
+    scores = []
 
     np.seterr(divide='ignore', invalid='ignore')
     
@@ -179,6 +184,7 @@ if __name__ == '__main__':
             args.num_iter_wis
         )
 
+        mortality_counts_train.append(metadata_train[C_OUTCOME].mean())
         model_stats['train_bootql_mean'] = np.nanmean(train_bootql)
         model_stats['train_bootql_0.99'] = np.quantile(train_bootql, 0.99)
         model_stats['train_bootql_0.95'] = np.quantile(train_bootql, 0.99)
@@ -226,7 +232,10 @@ if __name__ == '__main__':
         wis_95lb = np.quantile(val_bootwis, 0.05)  #AI 95# LB, we want this as high as possible
         model_stats['val_bootwis_0.05'] = wis_95lb
         model_stats['val_bootwis_0.95'] = np.quantile(val_bootwis, 0.95)
-        print("95% LB: {:.2f}".format(wis_95lb))
+        print("Mortality: {:.3f} 95% LB: {:.2f}".format(metadata_val[C_OUTCOME].mean(), wis_95lb))
+        
+        mortality_counts_val.append(metadata_val[C_OUTCOME].mean())
+        scores.append(wis_95lb)
         
         all_model_stats.append(model_stats)
         
@@ -268,6 +277,8 @@ if __name__ == '__main__':
                 'model_num': modl
             })
 
+    with open(os.path.join(out_dir, "mortality_corr{}.pkl".format('_' + args.worker_label if args.worker_label else '')), "wb") as file:
+        pickle.dump((np.array(mortality_counts_train), np.array(mortality_counts_val), np.array(scores)), file)
     all_model_stats = pd.DataFrame(all_model_stats)
     all_model_stats.to_csv(os.path.join(out_dir, "model_stats{}.csv".format('_' + args.worker_label if args.worker_label else '')),
                            float_format='%.6f')

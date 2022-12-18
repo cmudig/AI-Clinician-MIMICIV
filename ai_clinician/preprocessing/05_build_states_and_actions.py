@@ -93,6 +93,7 @@ def build_states_and_actions(df, qstime, inputMV, inputCV, inputpreadm, vasoMV, 
             C_DIED_IN_HOSP: demog_row[C_MORTA_HOSP],
             C_DIED_WITHIN_48H_OF_OUT_TIME: abs((demog_row[C_DOD]) - (demog_row[C_OUTTIME])) < (24 * 3600 * 2),
             C_MORTA_90: demog_row[C_MORTA_90],
+            C_DOD_DISCH_DELTA: demog_row[C_DOD] - demog_row[C_DISCHTIME],
             C_DELAY_END_OF_RECORD_AND_DISCHARGE_OR_DEATH: (qstime.loc[icustayid, C_DISCHTIME] - qstime.loc[icustayid, C_LAST_TIMESTEP]) / 3600
         }
         

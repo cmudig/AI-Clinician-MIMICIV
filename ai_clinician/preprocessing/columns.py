@@ -164,6 +164,8 @@ C_INTERPRETATION = "interpretation"
 C_CATEGORY = "category"
 C_TEXT = "text"
 
+C_DOD_DISCH_DELTA = "dod_disch_delta"
+
 # Comorbidities
 C_CONGESTIVE_HEART_FAILURE = "congestive_heart_failure"
 C_CARDIAC_ARRHYTHMIAS = "cardiac_arrhythmias"
