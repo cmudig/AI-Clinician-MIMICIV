@@ -7,7 +7,7 @@ def calculate_onset(abx, bacterio, stay_id):
     matching_abs = abx.loc[abx[C_ICUSTAYID] == stay_id, C_STARTDATE].reset_index(drop=True).sort_values()
     matching_bacts = bacterio[bacterio[C_ICUSTAYID] == stay_id].reset_index(drop=True).sort_values(C_CHARTTIME)
     if matching_abs.empty or matching_bacts.empty: return None
-    for _, ab_time in matching_abs.iteritems():
+    for _, ab_time in matching_abs.items():
         # Calculate time delay between this antibiotic and all bacterio events
         dists = [abs(bact_row[C_CHARTTIME] - ab_time) / 3600 for _, bact_row in matching_bacts.iterrows()]
         min_index = np.argmin(dists)

@@ -17,9 +17,9 @@ def load_csv(*file_paths, null_icustayid=False, **kwargs):
             return pd.read_csv(path, dtype=spec, **kwargs)
     raise FileNotFoundError(", ".join(file_paths))
 
-def load_intermediate_or_raw_csv(data_dir, file_name):
+def load_intermediate_or_raw_csv(data_dir, file_name, **kwargs):
     return load_csv(os.path.join(data_dir, "intermediates", file_name),
-                     os.path.join(data_dir, "raw_data", file_name))
+                     os.path.join(data_dir, "raw_data", file_name), **kwargs)
 
 def reverse_readline(filename, buf_size=8192):
     """A generator that returns the lines of a file in reverse order"""

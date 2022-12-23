@@ -101,6 +101,9 @@ C_OUTPUT_TOTAL = 'output_total'
 C_OUTPUT_STEP = 'output_step'
 C_CUMULATED_BALANCE = 'cumulated_balance'
 
+C_ON_ANTIBIOTIC = 'on_antibiotic'
+C_POSITIVE_CULTURE = 'positive_culture'
+
 ######### Onset data
 
 C_ONSET_TIME = "onset_time"
@@ -369,7 +372,9 @@ IO_FIELD_NAMES = [
     C_INPUT_STEP,
     C_OUTPUT_TOTAL,
     C_OUTPUT_STEP,
-    C_CUMULATED_BALANCE
+    C_CUMULATED_BALANCE,
+    C_ON_ANTIBIOTIC,
+    C_POSITIVE_CULTURE
 ]
 
 DEMOGRAPHICS_FIELD_NAMES = [
