@@ -21,7 +21,9 @@ class DynamicsDataset(torch.utils.data.Dataset):
                  demographics,
                  actions, 
                  rewards, 
-                 replacement_values=None, 
+                 replacement_values=None,
+                 obs_transform=None,
+                 demog_transform=None, 
                  gamma=0.95,
                  mask_prob=0.0):
         """
@@ -30,6 +32,10 @@ class DynamicsDataset(torch.utils.data.Dataset):
         mask_prob = probability of zeroing any value when returned.
         next_step_delta = if True, return the feature-wise difference between the next step and the previous one.
             if False, return the actual next step value
+        obs_transform: if not None, a function that should take a matrix of
+            observations and return a transformed version as well as a missingness
+            mask.
+        demog_transform: Same as obs_transform but for demographics.
         """
         assert len(stay_ids) == len(observations) == len(demographics) == len(actions) == len(rewards)
         self.observations = observations
@@ -40,6 +46,8 @@ class DynamicsDataset(torch.utils.data.Dataset):
         self.gamma = gamma
         self.mask_prob = mask_prob
         self.replacement_values = replacement_values
+        self.obs_transform = obs_transform
+        self.demog_transform = demog_transform
         
         self.stay_id_pos = []
         last_stay_id = None
@@ -72,11 +80,17 @@ class DynamicsDataset(torch.utils.data.Dataset):
         actions = self.actions[trajectory_indexes]
         rewards = self.rewards[trajectory_indexes]
         
-        # Replace NaNs with median
-        obs_missing_mask = pd.isna(observations)
-        if self.replacement_values is not None:
-            observations = np.where(obs_missing_mask, self.replacement_values, observations)
+        if self.obs_transform is not None:
+            observations, obs_missing_mask = self.obs_transform(observations)
+        else:
+            # Replace NaNs with median
+            obs_missing_mask = pd.isna(observations)
+            if self.replacement_values is not None:
+                observations = np.where(obs_missing_mask, self.replacement_values, observations)
         
+        if self.demog_transform is not None:
+            demographics, _ = self.demog_transform(demographics)
+            
         # Mask if needed
         input_obs = observations
         if self.mask_prob > 0.0:

@@ -163,13 +163,29 @@ class StatePredictionModel(nn.Module):
     aleatoric uncertainty-aware next state.
     """
     
-    def __init__(self, state_dim, embed_dim, variance_regularizer=1.0, timestep_weight_eps=0.1, predict_delta=True, num_steps=1, device='cpu'):
+    def __init__(self, 
+                 state_dim, 
+                 embed_dim, 
+                 discrete=False,
+                 variance_regularizer=1.0, 
+                 timestep_weight_eps=0.1, 
+                 predict_delta=True, 
+                 num_steps=1,
+                 loss_fn=None, 
+                 device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
         self.decoder = nn.Linear(embed_dim, state_dim)
-        self.variance_decoder = nn.Linear(embed_dim, state_dim)
-        self.variance_regularizer = variance_regularizer
-        self.timestep_weight_eps = timestep_weight_eps
+        self.discrete = discrete
+        if loss_fn is not None:
+            self.loss_fn = loss_fn
+        elif not self.discrete:
+            self.variance_decoder = nn.Linear(embed_dim, state_dim)
+            self.variance_regularizer = variance_regularizer
+            self.timestep_weight_eps = timestep_weight_eps
+        else:
+            self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+            
         self.predict_delta = predict_delta
         self.num_steps = num_steps
         self.device = device
@@ -177,13 +193,17 @@ class StatePredictionModel(nn.Module):
     def init_weights(self):
         self.decoder.bias.data.zero_()
         torch.nn.init.xavier_normal_(self.decoder.weight.data) # uniform_(-initrange, initrange)
-        self.variance_decoder.bias.data.fill_(1.0)
-        torch.nn.init.xavier_normal_(self.variance_decoder.weight.data) # uniform_(-initrange, initrange)
+        if not self.discrete:
+            self.variance_decoder.bias.data.fill_(1.0)
+            torch.nn.init.xavier_normal_(self.variance_decoder.weight.data) # uniform_(-initrange, initrange)
         
     def forward(self, embedding):
         output_mu = self.decoder(embedding)
-        logvar = self.variance_decoder(embedding)
-        return output_mu, logvar, torch.distributions.Normal(output_mu, torch.exp(logvar) ** 0.5)
+        if self.discrete:
+            return output_mu
+        else:
+            logvar = self.variance_decoder(embedding)
+            return output_mu, logvar, torch.distributions.Normal(output_mu, torch.exp(logvar) ** 0.5)
     
     def compute_loss(self, in_batch, model_outputs):
         """
@@ -195,23 +215,28 @@ class StatePredictionModel(nn.Module):
             torch.distributions.Normal of shape (N, L, S) where S is state_dim
         """
         in_state, _, _, in_missing_mask, _, _, seq_lens = in_batch
-        _, logvar, distro = model_outputs
-        
         L = in_state.shape[1]
         assert L > self.num_steps
+
         next_state_vec = in_state[:,self.num_steps:,:].clone()
         if self.predict_delta:
             next_state_vec -= in_state[:,:in_state.shape[1] - self.num_steps,:]
-
         if self.num_steps > 0:
             next_state_vec = torch.cat((next_state_vec, torch.zeros(next_state_vec.shape[0], 1, next_state_vec.shape[2]).to(self.device)), 1)
-            timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
-        else:
-            timestep_weights = torch.ones_like(next_state_vec).to(self.device)
-        neg_log_likelihood = -distro.log_prob(next_state_vec)
-        overall_loss = neg_log_likelihood + self.variance_regularizer * logvar
-        overall_loss *= timestep_weights
-        
+
+        if self.discrete or self.loss_fn is not None:
+            overall_loss = self.loss_fn(model_outputs, next_state_vec)
+        else:            
+            _, logvar, distro = model_outputs
+            
+            if self.predict_delta:
+                timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
+            else:
+                timestep_weights = torch.ones_like(next_state_vec).to(self.device)
+            neg_log_likelihood = -distro.log_prob(next_state_vec)
+            overall_loss = neg_log_likelihood + self.variance_regularizer * logvar
+            overall_loss *= timestep_weights
+            
         loss_mask = torch.logical_and(torch.arange(L)[None, :, None].to(self.device) < seq_lens[:, None, None] - self.num_steps,
                                         ~in_missing_mask)
 
@@ -261,11 +286,16 @@ class ActionPredictionModel(nn.Module):
     A model that predicts the action that gave rise to the transition between
     pairs of states.
     """
-    def __init__(self, embed_dim, action_dim, device='cpu'):
+    def __init__(self, embed_dim, action_dim, discrete=False, num_bins_per_action=None, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
         self.net = FullyConnected2Layer(embed_dim * 2, embed_dim, action_dim)
-        self.loss_fn = nn.MSELoss()
+        self.discrete = discrete
+        if discrete:
+            self.loss_fn = nn.CrossEntropyLoss()
+            self.num_bins_per_action = num_bins_per_action
+        else:
+            self.loss_fn = nn.MSELoss()
         self.device = device
         
     def create_batch(self, embeddings, seq_lens, actions):
@@ -300,5 +330,10 @@ class ActionPredictionModel(nn.Module):
         model_outputs: outputs of forward
         """
         _, actions = in_batch
+        if self.discrete and self.num_bins_per_action is not None:
+            # Add individual components spaced at num_bins_per_action
+            return sum(self.loss_fn(pred, true) for pred, true in zip(
+                torch.split(model_outputs, self.num_bins_per_action, 1),
+                torch.split(actions, self.num_bins_per_action, 1)))
         return self.loss_fn(model_outputs, actions)
     
