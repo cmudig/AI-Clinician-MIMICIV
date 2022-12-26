@@ -183,6 +183,7 @@ class StatePredictionModel(nn.Module):
             self.variance_decoder = nn.Linear(embed_dim, state_dim)
             self.variance_regularizer = variance_regularizer
             self.timestep_weight_eps = timestep_weight_eps
+            self.loss_fn = nn.MSELoss(reduction='none')
         else:
             self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
             
@@ -203,7 +204,7 @@ class StatePredictionModel(nn.Module):
             return output_mu
         else:
             logvar = self.variance_decoder(embedding)
-            return output_mu, logvar, torch.distributions.Normal(output_mu, torch.exp(logvar) ** 0.5)
+            return output_mu, logvar, torch.distributions.Normal(output_mu, F.softplus(logvar) ** 0.5)
     
     def compute_loss(self, in_batch, model_outputs):
         """
@@ -222,19 +223,22 @@ class StatePredictionModel(nn.Module):
         if self.predict_delta:
             next_state_vec -= in_state[:,:in_state.shape[1] - self.num_steps,:]
         if self.num_steps > 0:
-            next_state_vec = torch.cat((next_state_vec, torch.zeros(next_state_vec.shape[0], 1, next_state_vec.shape[2]).to(self.device)), 1)
+            next_state_vec = torch.cat((next_state_vec, torch.zeros(next_state_vec.shape[0], self.num_steps, next_state_vec.shape[2]).to(self.device)), 1)
 
-        if self.discrete or self.loss_fn is not None:
+        if self.discrete and self.loss_fn is not None:
             overall_loss = self.loss_fn(model_outputs, next_state_vec)
-        else:            
-            _, logvar, distro = model_outputs
+        else:    
+            mu, logvar, distro = model_outputs
             
             if self.predict_delta:
                 timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
             else:
                 timestep_weights = torch.ones_like(next_state_vec).to(self.device)
-            neg_log_likelihood = -distro.log_prob(next_state_vec)
-            overall_loss = neg_log_likelihood + self.variance_regularizer * logvar
+            if self.loss_fn is not None:
+                overall_loss = self.loss_fn(mu, next_state_vec)
+            else:
+                neg_log_likelihood = -distro.log_prob(next_state_vec)
+                overall_loss = neg_log_likelihood + self.variance_regularizer * (F.softplus(logvar) ** 0.5)
             overall_loss *= timestep_weights
             
         loss_mask = torch.logical_and(torch.arange(L)[None, :, None].to(self.device) < seq_lens[:, None, None] - self.num_steps,
@@ -286,11 +290,12 @@ class ActionPredictionModel(nn.Module):
     A model that predicts the action that gave rise to the transition between
     pairs of states.
     """
-    def __init__(self, embed_dim, action_dim, discrete=False, num_bins_per_action=None, device='cpu'):
+    def __init__(self, embed_dim, action_dim, discrete=False, num_bins_per_action=None, device='cpu', training_fraction=0.1):
         super().__init__()
         self.embed_dim = embed_dim
         self.net = FullyConnected2Layer(embed_dim * 2, embed_dim, action_dim)
         self.discrete = discrete
+        self.training_fraction = training_fraction
         if discrete:
             self.loss_fn = nn.CrossEntropyLoss()
             self.num_bins_per_action = num_bins_per_action
@@ -313,7 +318,10 @@ class ActionPredictionModel(nn.Module):
         """
         transitions = []
         returned_actions = []
-        for i in range(embeddings.shape[0]):
+        idxs_to_use = np.random.choice(np.arange(embeddings.shape[0]), 
+                                       size=int(np.ceil(embeddings.shape[0] * self.training_fraction)), 
+                                       replace=False)
+        for i in idxs_to_use:
             L = seq_lens[i].item()
             transitions.append(torch.cat((embeddings[i,:L - 1,:], embeddings[i,1:L,:]), 1))
             returned_actions.append(actions[i,:L - 1,:])
@@ -336,4 +344,68 @@ class ActionPredictionModel(nn.Module):
                 torch.split(model_outputs, self.num_bins_per_action, 1),
                 torch.split(actions, self.num_bins_per_action, 1)))
         return self.loss_fn(model_outputs, actions)
+    
+    
+class SubsequentBinaryPredictionModel(nn.Module):
+    """
+    A model that predicts whether pairs of final and initial embeddings come from
+    subsequent states.
+    """
+    def __init__(self, embed_dim, positive_label_fraction=0.5, training_fraction=0.1, device='cpu'):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.net = FullyConnected2Layer(embed_dim * 2, embed_dim, 1)
+        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.positive_label_fraction = positive_label_fraction
+        self.training_fraction = training_fraction
+        self.device = device
+        
+    def create_batch(self, final_embeddings, initial_embeddings, seq_lens):
+        """
+        Creates a batch consisting of each pair of actions from the given 
+        sequence of embeddings, matched to the actions that were taken.
+        
+        final_embeddings: (N, L, E)
+        initial_embeddings: (N, L, E)
+        seq_lens: N
+        
+        Output:
+            embeddings: (N', E * 2) where N' is sum (seq_len[i] - 1) over all i
+            labels: (N')
+        """
+        final_flat = []
+        initial_flat = []
+        idxs_to_use = np.random.choice(np.arange(final_embeddings.shape[0]), 
+                                       size=int(np.ceil(final_embeddings.shape[0] * self.training_fraction)), 
+                                       replace=False)
+        for i in idxs_to_use:
+            L = seq_lens[i].item()
+            final_flat.append(final_embeddings[i,:L - 1,:])
+            initial_flat.append(initial_embeddings[i,1:L,:])
+        
+        final_flat = torch.cat(final_flat, 0)
+        initial_flat = torch.cat(initial_flat, 0)
+        left_side = np.arange(final_flat.shape[0])
+        right_side = np.arange(final_flat.shape[0])
+
+        while (left_side == right_side).mean() > 1 - self.positive_label_fraction:
+            random_pair = np.random.choice(len(left_side), size=2, replace=False)
+            left_side[random_pair] = left_side[np.flip(random_pair)]
+            random_pair = np.random.choice(len(right_side), size=2, replace=False)
+            right_side[random_pair] = right_side[np.flip(random_pair)]
+            
+        return final_flat[left_side], initial_flat[right_side], torch.FloatTensor(left_side == right_side).unsqueeze(1)
+        
+    def forward(self, left_side, right_side):
+        return self.net(torch.cat((left_side, right_side), 1))
+    
+    def compute_loss(self, in_batch, model_outputs):
+        """
+        Compute the MSE loss of the return or reward compared to the model output.
+        
+        in_batch: tuple (transitions, actions) generated by create_batch
+        model_outputs: outputs of forward
+        """
+        _, _, labels = in_batch
+        return self.loss_fn(model_outputs, labels)
     
