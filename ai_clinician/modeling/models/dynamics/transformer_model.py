@@ -248,20 +248,21 @@ class StatePredictionModel(nn.Module):
         return loss_masked.sum() / loss_mask.sum()
 
 class FullyConnected2Layer(nn.Module):
-    def __init__(self, in_dim, latent_dim, out_dim):
+    def __init__(self, in_dim, latent_dim, out_dim, dropout=0.1):
         super().__init__()
         self.l1 = nn.Linear(in_dim, latent_dim)
+        self.dropout1 = nn.Dropout(dropout)
         self.l2 = nn.Linear(latent_dim, out_dim)
 
     def forward(self, state):
-        out = F.leaky_relu(self.l1(state))
+        out = self.dropout1(F.leaky_relu(self.l1(state)))
         return self.l2(out)
     
 class ValuePredictionModel(nn.Module):
-    def __init__(self, embed_dim, predict_rewards=False, device='cpu'):
+    def __init__(self, embed_dim, predict_rewards=False, dropout=0.1, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
-        self.net = FullyConnected2Layer(embed_dim, embed_dim, 1)
+        self.net = FullyConnected2Layer(embed_dim, embed_dim, 1, dropout=dropout)
         self.predict_rewards = predict_rewards
         self.loss_fn = nn.MSELoss(reduction='none')
         self.device = device
@@ -290,10 +291,10 @@ class ActionPredictionModel(nn.Module):
     A model that predicts the action that gave rise to the transition between
     pairs of states.
     """
-    def __init__(self, embed_dim, action_dim, discrete=False, num_bins_per_action=None, device='cpu', training_fraction=0.1):
+    def __init__(self, embed_dim, action_dim, discrete=False, num_bins_per_action=None, dropout=0.1, device='cpu', training_fraction=0.1):
         super().__init__()
         self.embed_dim = embed_dim
-        self.net = FullyConnected2Layer(embed_dim * 2, embed_dim, action_dim)
+        self.net = FullyConnected2Layer(embed_dim * 2, embed_dim, action_dim, dropout=dropout)
         self.discrete = discrete
         self.training_fraction = training_fraction
         if discrete:
@@ -351,10 +352,10 @@ class SubsequentBinaryPredictionModel(nn.Module):
     A model that predicts whether pairs of final and initial embeddings come from
     subsequent states.
     """
-    def __init__(self, embed_dim, positive_label_fraction=0.5, training_fraction=0.1, device='cpu'):
+    def __init__(self, embed_dim, positive_label_fraction=0.5, training_fraction=0.1, dropout=0.1, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
-        self.net = FullyConnected2Layer(embed_dim * 2, embed_dim, 1)
+        self.net = FullyConnected2Layer(embed_dim * 2, embed_dim, 1, dropout=dropout)
         self.loss_fn = nn.BCEWithLogitsLoss()
         self.positive_label_fraction = positive_label_fraction
         self.training_fraction = training_fraction
