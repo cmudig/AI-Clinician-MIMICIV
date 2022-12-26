@@ -394,7 +394,7 @@ class SubsequentBinaryPredictionModel(nn.Module):
             random_pair = np.random.choice(len(right_side), size=2, replace=False)
             right_side[random_pair] = right_side[np.flip(random_pair)]
             
-        return final_flat[left_side], initial_flat[right_side], torch.FloatTensor(left_side == right_side).unsqueeze(1)
+        return final_flat[left_side], initial_flat[right_side], torch.FloatTensor(left_side == right_side).unsqueeze(1).to(self.device)
         
     def forward(self, left_side, right_side):
         return self.net(torch.cat((left_side, right_side), 1))
