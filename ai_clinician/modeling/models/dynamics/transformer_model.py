@@ -251,18 +251,21 @@ class FullyConnected2Layer(nn.Module):
     def __init__(self, in_dim, latent_dim, out_dim, dropout=0.1):
         super().__init__()
         self.l1 = nn.Linear(in_dim, latent_dim)
-        self.dropout1 = nn.Dropout(dropout)
         self.l2 = nn.Linear(latent_dim, out_dim)
 
     def forward(self, state):
-        out = self.dropout1(F.leaky_relu(self.l1(state)))
+        out = F.leaky_relu(self.l1(state))
+        # if len(out.shape) == 3:
+        #     out = torch.swapaxes(self.norm1(torch.swapaxes(out, 1, 2)), 1, 2)
+        # else:
+        #     out = self.norm1(out)
         return self.l2(out)
     
 class ValuePredictionModel(nn.Module):
     def __init__(self, embed_dim, predict_rewards=False, dropout=0.1, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
-        self.net = FullyConnected2Layer(embed_dim, embed_dim, 1, dropout=dropout)
+        self.net = FullyConnected2Layer(embed_dim, 16, 1, dropout=dropout)
         self.predict_rewards = predict_rewards
         self.loss_fn = nn.MSELoss(reduction='none')
         self.device = device
@@ -355,7 +358,7 @@ class SubsequentBinaryPredictionModel(nn.Module):
     def __init__(self, embed_dim, positive_label_fraction=0.5, training_fraction=0.1, dropout=0.1, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
-        self.net = FullyConnected2Layer(embed_dim * 2, embed_dim, 1, dropout=dropout)
+        self.net = FullyConnected2Layer(embed_dim * 2, 16, 1, dropout=dropout)
         self.loss_fn = nn.BCEWithLogitsLoss()
         self.positive_label_fraction = positive_label_fraction
         self.training_fraction = training_fraction
