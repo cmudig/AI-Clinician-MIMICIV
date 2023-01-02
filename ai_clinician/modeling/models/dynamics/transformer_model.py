@@ -251,10 +251,18 @@ class FullyConnected2Layer(nn.Module):
     def __init__(self, in_dim, latent_dim, out_dim, dropout=0.1):
         super().__init__()
         self.l1 = nn.Linear(in_dim, latent_dim)
+        self.dropout = nn.Dropout(dropout)
         self.l2 = nn.Linear(latent_dim, out_dim)
+        self.init_weights()
+
+    def init_weights(self):
+        self.l1.bias.data.zero_()
+        torch.nn.init.xavier_normal_(self.l1.weight.data)  # uniform_(-initrange, initrange)
+        self.l2.bias.data.zero_()
+        torch.nn.init.xavier_normal_(self.l2.weight.data)  # uniform_(-initrange, initrange)
 
     def forward(self, state):
-        out = F.leaky_relu(self.l1(state))
+        out = F.leaky_relu(self.l1(self.dropout(state)))
         # if len(out.shape) == 3:
         #     out = torch.swapaxes(self.norm1(torch.swapaxes(out, 1, 2)), 1, 2)
         # else:
