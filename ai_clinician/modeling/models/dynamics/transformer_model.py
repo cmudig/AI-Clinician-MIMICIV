@@ -297,6 +297,39 @@ class ValuePredictionModel(nn.Module):
         loss_masked = loss.where(loss_mask, torch.tensor(0.0).to(self.device))
         return loss_masked.sum() / loss_mask.sum()
     
+class TerminationPredictionModel(nn.Module):
+    def __init__(self, embed_dim, dropout=0.1, device='cpu'):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.net = FullyConnected2Layer(embed_dim, 16, 1, dropout=dropout)
+        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.device = device
+        
+    def forward(self, embedding):
+        return self.net(embedding)
+    
+    def compute_loss(self, in_batch, model_outputs):
+        """
+        Compute the MSE loss of the return or reward compared to the model output.
+        
+        in_batch: tuple (state, demog, action, missing, rewards, values, seq_len)
+        model_outputs: (N, L, 1)
+        """
+        obs, _, _, _, _, _, seq_lens = in_batch
+        L = obs.shape[1]
+        labels = (torch.arange(L).to(self.device)[None, :] == seq_lens[:, None] - 1).float()
+        
+        loss = self.loss_fn(model_outputs.squeeze(2), labels)
+        
+        loss_mask = torch.arange(L).to(self.device)[None, :] < seq_lens[:, None]
+
+        loss_masked = loss.where(loss_mask, torch.tensor(0.0).to(self.device))
+        
+        term_correct = ((torch.round(torch.sigmoid(model_outputs.squeeze(2))) == labels) & loss_mask).sum().item()
+        term_total = loss_mask.sum().item()
+
+        return loss_masked.sum() / loss_mask.sum(), term_correct, term_total
+    
 class ActionPredictionModel(nn.Module):
     """
     A model that predicts the action that gave rise to the transition between
