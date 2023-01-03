@@ -39,11 +39,11 @@ NORM_COLUMNS = [C_WEIGHT, C_GCS,
                 C_HR, C_SYSBP, C_MEANBP, C_DIABP, C_RR, 
                 C_TEMP_C, C_FIO2_1, C_PAPSYS, C_PAPMEAN, C_PAPDIA, 
                 C_CI, C_IONISED_CA, C_CO2_MEQL, C_TOTAL_PROTEIN,  # there's no SVR data so excluding C_SVR
-                C_ALBUMIN, C_TROPONIN, C_CRP, C_ACT,
+                C_ALBUMIN, C_TROPONIN, C_CRP, # C_ACT,
                 C_POTASSIUM, C_SODIUM, C_CHLORIDE, C_GLUCOSE, C_MAGNESIUM, C_CALCIUM,
                 C_HB, C_HT, C_RBC_COUNT, C_WBC_COUNT, C_PLATELETS_COUNT, C_PTT, 
                 C_PT, C_ARTERIAL_PH, C_PAO2, C_PACO2, C_ARTERIAL_BE, C_HCO3, 
-                C_ETCO2, C_SVO2, C_ARTERIAL_LACTATE, C_SOFA, C_SIRS, C_CUMULATED_BALANCE]
+                C_ETCO2, C_ARTERIAL_LACTATE, C_SOFA, C_SIRS, C_CUMULATED_BALANCE] # C_SVO2, (after EtCO2)
 LOG_NORM_COLUMNS = [C_SPO2, C_BUN, C_CREATININE, C_SGOT, C_SGPT, 
                     C_TOTAL_BILI, C_DIRECT_BILI, C_INR, C_INPUT_TOTAL, "norm_input_step", C_MAX_DOSE_VASO, 
                     C_OUTPUT_TOTAL, "norm_output_step", C_SHOCK_INDEX, C_PAO2_FIO2]
