@@ -171,11 +171,12 @@ class StatePredictionModel(nn.Module):
                  timestep_weight_eps=0.1, 
                  predict_delta=True, 
                  num_steps=1,
+                 num_layers=1,
                  loss_fn=None, 
                  device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
-        self.decoder = nn.Linear(embed_dim, state_dim)
+        self.decoder = nn.ModuleList([nn.Linear(embed_dim, embed_dim) for _ in range(num_layers - 1)] + [nn.Linear(embed_dim, state_dim)])
         self.discrete = discrete
         if loss_fn is not None:
             self.loss_fn = loss_fn
@@ -192,14 +193,17 @@ class StatePredictionModel(nn.Module):
         self.device = device
         
     def init_weights(self):
-        self.decoder.bias.data.zero_()
-        torch.nn.init.xavier_normal_(self.decoder.weight.data) # uniform_(-initrange, initrange)
+        for l in self.decoder:
+            l.bias.data.zero_()
+            torch.nn.init.xavier_normal_(l.weight.data) # uniform_(-initrange, initrange)
         if not self.discrete:
             self.variance_decoder.bias.data.fill_(1.0)
             torch.nn.init.xavier_normal_(self.variance_decoder.weight.data) # uniform_(-initrange, initrange)
         
     def forward(self, embedding):
-        output_mu = self.decoder(embedding)
+        for l in self.decoder[:-1]:
+            embedding = F.leaky_relu(embedding)
+        output_mu = self.decoder[-1](embedding)
         if self.discrete:
             return output_mu
         else:
@@ -248,11 +252,14 @@ class StatePredictionModel(nn.Module):
         return loss_masked.sum() / loss_mask.sum()
 
 class FullyConnected2Layer(nn.Module):
-    def __init__(self, in_dim, latent_dim, out_dim, dropout=0.1):
+    def __init__(self, in_dim, latent_dim, out_dim, dropout=0.1, batch_norm=False):
         super().__init__()
         self.l1 = nn.Linear(in_dim, latent_dim)
         self.dropout = nn.Dropout(dropout)
         self.l2 = nn.Linear(latent_dim, out_dim)
+        self.batch_norm = batch_norm
+        if self.batch_norm:
+            self.norm1 = nn.BatchNorm1d(latent_dim)
         self.init_weights()
 
     def init_weights(self):
@@ -263,17 +270,18 @@ class FullyConnected2Layer(nn.Module):
 
     def forward(self, state):
         out = F.leaky_relu(self.l1(self.dropout(state)))
-        # if len(out.shape) == 3:
-        #     out = torch.swapaxes(self.norm1(torch.swapaxes(out, 1, 2)), 1, 2)
-        # else:
-        #     out = self.norm1(out)
+        if self.batch_norm:
+            if len(out.shape) == 3:
+                out = torch.transpose(self.norm1(torch.transpose(out, 1, 2)), 1, 2)
+            else:
+                out = self.norm1(out)
         return self.l2(out)
     
 class ValuePredictionModel(nn.Module):
-    def __init__(self, embed_dim, predict_rewards=False, dropout=0.1, device='cpu'):
+    def __init__(self, embed_dim, predict_rewards=False, hidden_dim=16, dropout=0.1, batch_norm=False, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
-        self.net = FullyConnected2Layer(embed_dim, 16, 1, dropout=dropout)
+        self.net = FullyConnected2Layer(embed_dim, hidden_dim, 1, dropout=dropout, batch_norm=batch_norm)
         self.predict_rewards = predict_rewards
         self.loss_fn = nn.MSELoss(reduction='none')
         self.device = device
@@ -298,10 +306,10 @@ class ValuePredictionModel(nn.Module):
         return loss_masked.sum() / loss_mask.sum()
     
 class TerminationPredictionModel(nn.Module):
-    def __init__(self, embed_dim, dropout=0.1, device='cpu'):
+    def __init__(self, embed_dim, dropout=0.1, hidden_dim=16, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
-        self.net = FullyConnected2Layer(embed_dim, 16, 1, dropout=dropout)
+        self.net = FullyConnected2Layer(embed_dim, hidden_dim, 1, dropout=dropout)
         self.loss_fn = nn.BCEWithLogitsLoss()
         self.device = device
         
@@ -396,10 +404,10 @@ class SubsequentBinaryPredictionModel(nn.Module):
     A model that predicts whether pairs of final and initial embeddings come from
     subsequent states.
     """
-    def __init__(self, embed_dim, positive_label_fraction=0.5, training_fraction=0.1, dropout=0.1, device='cpu'):
+    def __init__(self, embed_dim, positive_label_fraction=0.5, hidden_dim=16, training_fraction=0.1, dropout=0.1, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
-        self.net = FullyConnected2Layer(embed_dim * 2, 16, 1, dropout=dropout)
+        self.net = FullyConnected2Layer(embed_dim * 2, hidden_dim, 1, dropout=dropout)
         self.loss_fn = nn.BCEWithLogitsLoss()
         self.positive_label_fraction = positive_label_fraction
         self.training_fraction = training_fraction
@@ -454,3 +462,205 @@ class SubsequentBinaryPredictionModel(nn.Module):
         _, _, labels = in_batch
         return self.loss_fn(model_outputs, labels)
     
+    
+class MultitaskDynamicsModel:
+    """
+    An object which manages a transformer-based dynamics model with several
+    pretext tasks.
+    """
+    def __init__(self,
+                 obs_size,
+                 dem_size,
+                 embed_size=512,
+                 nlayers=3,
+                 nhead=4,
+                 dropout=0.0,
+                 action_training_fraction=0.2,
+                 batch_size=32,
+                 max_seq_len=160,
+                 reward_batch_norm=True,
+                 fc_hidden_dim=16,
+                 mask_prob=0.5,
+                 device='cpu',
+                 replacement_values=None):
+        
+        super().__init__()
+        self.model = TransformerDynamicsModel(
+            obs_size, 
+            dem_size,
+            2, 
+            embed_size, 
+            nhead, 
+            nlayers, 
+            dropout, 
+            device=device).to(device)
+
+        self.current_state_model = StatePredictionModel(
+            obs_size, 
+            embed_size, 
+            predict_delta=False, 
+            num_steps=0, 
+            device=device).to(device)
+        self.next_state_model = StatePredictionModel(
+            obs_size, 
+            embed_size, 
+            predict_delta=False, 
+            num_steps=1, 
+            device=device).to(device)
+        self.reward_model = ValuePredictionModel(
+            embed_size, 
+            predict_rewards=True, 
+            device=device, 
+            batch_norm=reward_batch_norm,
+            hidden_dim=fc_hidden_dim,
+            dropout=dropout).to(device)
+        self.return_model = ValuePredictionModel(
+            embed_size, 
+            predict_rewards=False, 
+            device=device, 
+            batch_norm=reward_batch_norm,
+            hidden_dim=fc_hidden_dim,
+            dropout=dropout).to(device)
+        self.action_model = ActionPredictionModel(
+            embed_size, 
+            2, 
+            device=device, 
+            training_fraction=action_training_fraction, 
+            dropout=dropout).to(device)
+        self.subsequent_model = SubsequentBinaryPredictionModel(
+            embed_size, 
+            device=device, 
+            training_fraction=action_training_fraction,
+            hidden_dim=fc_hidden_dim, 
+            dropout=dropout).to(device)
+        self.termination_model = TerminationPredictionModel(
+            embed_size, 
+            dropout=dropout, 
+            hidden_dim=fc_hidden_dim,
+            device=device).to(device)
+        
+        self.overall_model = nn.ModuleList([
+            self.model, 
+            self.current_state_model, 
+            self.next_state_model, 
+            self.reward_model, 
+            self.return_model, 
+            self.action_model, 
+            self.subsequent_model, 
+            self.termination_model
+        ])
+        print("Model has", sum(p.numel() for p in self.overall_model.parameters()), "parameters")
+
+        self.device = device
+        self.batch_size = batch_size
+        self.max_seq_len = max_seq_len
+        self.mask_prob = mask_prob
+        self.replacement_values = replacement_values
+        
+        self.loss_weights = (torch.FloatTensor([1, 1, 0.2, 0.05, 1, 1, 1, 1]) * 0.1).to(device)
+        
+        self.consistency_offset = 1
+        self.consistency_subloss = nn.MSELoss(reduction='none')
+
+    def _consistency_loss(self, final_embed, initial_embed):
+        return torch.cat((self.consistency_subloss(final_embed[:,:-self.consistency_offset],
+                                                   initial_embed[:,self.consistency_offset:]), 
+                         torch.zeros(final_embed.shape[0],
+                                     self.consistency_offset, 
+                                     final_embed.shape[2]).to(self.device)), 1)
+        
+    def compute_loss(self, batch, mask=True, return_elements=False, return_accuracies=False):
+        obs, dem, ac, missing, rewards, discounted_rewards, in_lens = batch
+        
+        src_mask = generate_square_subsequent_mask(self.max_seq_len).to(self.device) # torch.ones(seq_len, seq_len).to(device)
+        
+        obs = obs.to(self.device)
+        dem = dem.to(self.device)
+        ac = ac.to(self.device)
+        missing = missing.to(self.device)
+        rewards = rewards.to(self.device)
+        discounted_rewards = discounted_rewards.to(self.device)
+        in_lens = in_lens.to(self.device)
+        batch = (obs, dem, ac, missing, rewards, discounted_rewards, in_lens)
+
+        if mask:
+            assert self.replacement_values is not None
+            should_mask = torch.logical_and(torch.rand(*obs.shape).to(self.device) < self.mask_prob, ~missing)
+            masked_obs = torch.where(should_mask, torch.from_numpy(self.replacement_values).float().to(self.device), obs)
+
+        # Run transformer
+        _, initial_embed, final_embed = self.model(masked_obs, dem, ac, src_mask)
+        
+        # 1. Masked prediction model
+        pred_curr = self.current_state_model(initial_embed)
+        curr_state_loss = self.current_state_model.compute_loss(batch, pred_curr)
+        
+        # 2. Next-state prediction model
+        pred_next = self.next_state_model(final_embed)
+        next_state_loss = self.next_state_model.compute_loss(batch, pred_next)
+        
+        # 3. Reward model
+        pred_reward = self.reward_model(final_embed)
+        reward_loss = self.reward_model.compute_loss(batch, pred_reward)
+        
+        # 4. Return model
+        pred_return = self.return_model(final_embed)
+        return_loss = self.return_model.compute_loss(batch, pred_return)
+
+        # 5. Consistency loss
+        c_loss = self._consistency_loss(final_embed, initial_embed)
+        loss_mask = torch.arange(c_loss.shape[1])[None, :, None].to(self.device) < in_lens[:, None, None]
+        c_loss_masked = c_loss.where(loss_mask, torch.tensor(0.0).to(self.device))
+        c_loss = c_loss_masked.sum() / loss_mask.sum()
+        
+        # 6. Action prediction loss
+        action_batch = self.action_model.create_batch(initial_embed, in_lens, ac)
+        pred_action = self.action_model(action_batch[0])
+        action_loss = self.action_model.compute_loss(action_batch, pred_action)
+        
+        # 7. Is subsequent action loss
+        subsequent_batch = self.subsequent_model.create_batch(final_embed, initial_embed, in_lens)
+        pred_subs = self.subsequent_model(subsequent_batch[0], subsequent_batch[1])
+        subs_loss = self.subsequent_model.compute_loss(subsequent_batch, pred_subs)
+        subs_correct = (torch.round(torch.sigmoid(pred_subs)) == subsequent_batch[2]).sum().item()
+        subs_total = subsequent_batch[2].shape[0]
+        
+        # 8. Termination model
+        pred_term = self.termination_model(final_embed)
+        term_loss, corr, tot = self.termination_model.compute_loss(batch, pred_term)
+        term_correct = corr
+        term_total = tot
+
+        itemized_loss = self.loss_weights * torch.stack((
+            curr_state_loss, 
+            next_state_loss, 
+            reward_loss, 
+            return_loss, 
+            c_loss, 
+            action_loss, 
+            subs_loss, 
+            term_loss
+        ))
+        
+        result = itemized_loss if return_elements else itemized_loss.sum()
+        if return_accuracies:
+            result = (result, (subs_correct, subs_total), (term_correct, term_total))
+        return result
+    
+    def train(self):
+        self.overall_model.train()
+        
+    def eval(self):
+        self.overall_model.eval()
+        
+    def state_dict(self):
+        return {
+            "dynamics": self.model.state_dict(),
+            "current_state": self.current_state_model.state_dict(),
+            "next_state": self.next_state_model.state_dict(),
+            "reward": self.reward_model.state_dict(),
+            "return": self.return_model.state_dict(),
+            "action": self.action_model.state_dict(),
+            "subsequent": self.subsequent_model.state_dict(),
+            "termination": self.termination_model.state_dict()
+        }

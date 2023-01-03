@@ -114,3 +114,35 @@ class DynamicsDataset(torch.utils.data.Dataset):
             torch.from_numpy(rewards.reshape(-1, 1)).float(),
             torch.from_numpy(discounted_rewards).float()
         )
+
+    def bootstrap(self, n_trajectories=None):
+        """
+        Creates a new DynamicsDataset that is a bootstrapped sample of this
+        dataset, with optional new number of trajectories n_trajectories.
+        """
+        resampled_indexes = np.random.choice(len(self.stay_id_pos), size=n_trajectories or len(self.stay_id_pos), replace=True)
+        sampled_stay_ids = []
+        sampled_obs = []
+        sampled_dem = []
+        sampled_actions = []
+        sampled_outcomes = []
+        for stay_id_idx in resampled_indexes:
+            trajectory_indexes = np.arange(*self.stay_id_pos[stay_id_idx])
+            sampled_stay_ids.append(self.stay_ids[trajectory_indexes])
+            sampled_obs.append(self.observations[trajectory_indexes])
+            sampled_dem.append(self.demographics[trajectory_indexes])
+            sampled_actions.append(self.actions[trajectory_indexes])
+            sampled_outcomes.append(self.rewards[trajectory_indexes])
+            
+        return DynamicsDataset(
+            np.concatenate(sampled_stay_ids),
+            np.vstack(sampled_obs),
+            np.vstack(sampled_dem),
+            np.vstack(sampled_actions),
+            np.concatenate(sampled_outcomes),
+            replacement_values=self.replacement_values,
+            obs_transform=self.obs_transform,
+            demog_transform=self.demog_transform,
+            gamma=self.gamma,
+            mask_prob=self.mask_prob
+        )
