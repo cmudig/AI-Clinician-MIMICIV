@@ -201,13 +201,13 @@ def pad_collate(batch):
     padded_arrays = [pad_sequence(xx, batch_first=True, padding_value=0) for xx in arrays_to_pad]
     return (*padded_arrays, torch.LongTensor(x_lens))
 
-def prepare_dataset(dataset, comorb, train_test_split=None, test_size=0.15, val_size=0.15):
+def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, val_size=0.15):
     """
     Args:
         dataset: a dataframe containing all the state and most of the demographics
             columns (except for comorbidities) for each patient.
         comorb: a dataframe containing elixhauser comorbidities for each patient.
-        train_test_split: If None, a train/val/test split will be generated. If
+        train_test_split_ids: If None, a train/val/test split will be generated. If
             not None, should be a tuple of (train_ids, val_ids, test_ids).
         test_size: Fraction of the entire dataset that should be used for the  
             test split (if train_test_split is None).
@@ -230,8 +230,8 @@ def prepare_dataset(dataset, comorb, train_test_split=None, test_size=0.15, val_
     dataset["norm_output_step"] = dataset[C_OUTPUT_STEP] / np.where(dataset[C_WEIGHT] == 0, 1, dataset[C_WEIGHT])
 
     # Generate train/val/test split
-    if train_test_split is not None:
-        train_ids, val_ids, test_ids = train_test_split
+    if train_test_split_ids is not None:
+        train_ids, val_ids, test_ids = train_test_split_ids
         print("Using provided train/val/test split")
     else:
         print("Generating new train/val/test split")
