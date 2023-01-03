@@ -297,4 +297,4 @@ def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, 
                                    rewards_test,
                                    replacement_values)
     
-    return dataset, cleaned_demog, train_dataset, val_dataset, test_dataset, train_test_split, normer
+    return dataset, cleaned_demog, train_dataset, val_dataset, test_dataset, (train_ids, val_ids, test_ids), normer
