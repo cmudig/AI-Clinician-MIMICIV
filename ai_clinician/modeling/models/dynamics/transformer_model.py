@@ -167,36 +167,43 @@ class StatePredictionModel(nn.Module):
                  state_dim, 
                  embed_dim, 
                  discrete=False,
+                 predict_variance=False,
                  variance_regularizer=1.0, 
                  timestep_weight_eps=0.1, 
                  predict_delta=True, 
                  num_steps=1,
                  num_layers=1,
                  loss_fn=None, 
+                 target_transform=None,
                  device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
         self.decoder = nn.ModuleList([nn.Linear(embed_dim, embed_dim) for _ in range(num_layers - 1)] + [nn.Linear(embed_dim, state_dim)])
         self.discrete = discrete
+        self.predict_variance = predict_variance
         if loss_fn is not None:
             self.loss_fn = loss_fn
         elif not self.discrete:
-            self.variance_decoder = nn.Linear(embed_dim, state_dim)
-            self.variance_regularizer = variance_regularizer
-            self.timestep_weight_eps = timestep_weight_eps
-            self.loss_fn = nn.MSELoss(reduction='none')
+            if self.predict_variance:
+                self.variance_decoder = nn.Linear(embed_dim, state_dim)
+                self.variance_regularizer = variance_regularizer
+                self.timestep_weight_eps = timestep_weight_eps
+                self.loss_fn = None
+            else:
+                self.loss_fn = nn.MSELoss(reduction='none')
         else:
             self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
             
         self.predict_delta = predict_delta
         self.num_steps = num_steps
         self.device = device
+        self.target_transform = target_transform
         
     def init_weights(self):
         for l in self.decoder:
             l.bias.data.zero_()
             torch.nn.init.xavier_normal_(l.weight.data) # uniform_(-initrange, initrange)
-        if not self.discrete:
+        if not self.discrete and self.predict_variance:
             self.variance_decoder.bias.data.fill_(1.0)
             torch.nn.init.xavier_normal_(self.variance_decoder.weight.data) # uniform_(-initrange, initrange)
         
@@ -204,7 +211,7 @@ class StatePredictionModel(nn.Module):
         for l in self.decoder[:-1]:
             embedding = F.leaky_relu(embedding)
         output_mu = self.decoder[-1](embedding)
-        if self.discrete:
+        if self.discrete or not self.predict_variance:
             return output_mu
         else:
             logvar = self.variance_decoder(embedding)
@@ -229,8 +236,18 @@ class StatePredictionModel(nn.Module):
         if self.num_steps > 0:
             next_state_vec = torch.cat((next_state_vec, torch.zeros(next_state_vec.shape[0], self.num_steps, next_state_vec.shape[2]).to(self.device)), 1)
 
-        if self.discrete and self.loss_fn is not None:
+        if self.target_transform is not None:
+            next_state_vec = self.target_transform(next_state_vec)
+            
+        if self.discrete or not self.predict_variance:
             overall_loss = self.loss_fn(model_outputs, next_state_vec)
+        elif not self.predict_variance:
+            if self.predict_delta:
+                timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
+            else:
+                timestep_weights = torch.ones_like(next_state_vec).to(self.device)
+            overall_loss = self.loss_fn(model_outputs, next_state_vec)
+            overall_loss *= timestep_weights
         else:    
             mu, logvar, distro = model_outputs
             
@@ -238,11 +255,8 @@ class StatePredictionModel(nn.Module):
                 timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
             else:
                 timestep_weights = torch.ones_like(next_state_vec).to(self.device)
-            if self.loss_fn is not None:
-                overall_loss = self.loss_fn(mu, next_state_vec)
-            else:
-                neg_log_likelihood = -distro.log_prob(next_state_vec)
-                overall_loss = neg_log_likelihood + self.variance_regularizer * (F.softplus(logvar) ** 0.5)
+            neg_log_likelihood = -distro.log_prob(next_state_vec)
+            overall_loss = neg_log_likelihood + self.variance_regularizer * (F.softplus(logvar) ** 0.5)
             overall_loss *= timestep_weights
             
         loss_mask = torch.logical_and(torch.arange(L)[None, :, None].to(self.device) < seq_lens[:, None, None] - self.num_steps,
@@ -328,6 +342,8 @@ class TerminationPredictionModel(nn.Module):
         labels = (torch.arange(L).to(self.device)[None, :] == seq_lens[:, None] - 1).float()
         
         loss = self.loss_fn(model_outputs.squeeze(2), labels)
+        loss_weights = (labels * (0.5 * seq_lens[:, None]) + (1 - labels) * (0.5 * seq_lens[:, None] / (seq_lens[:, None] - 1))).to(self.device)
+        loss *= loss_weights
         
         loss_mask = torch.arange(L).to(self.device)[None, :] < seq_lens[:, None]
 
@@ -475,6 +491,8 @@ class MultitaskDynamicsModel:
                  nlayers=3,
                  nhead=4,
                  dropout=0.0,
+                 value_dropout=0.1,
+                 value_input_size=512,
                  action_training_fraction=0.2,
                  batch_size=32,
                  max_seq_len=160,
@@ -507,20 +525,25 @@ class MultitaskDynamicsModel:
             predict_delta=False, 
             num_steps=1, 
             device=device).to(device)
+        self.value_input_size = value_input_size
+        if self.value_input_size < embed_size:
+            self.value_input = nn.Linear(embed_size, self.value_input_size)
+        else:
+            self.value_input = None
         self.reward_model = ValuePredictionModel(
-            embed_size, 
+            self.value_input_size, 
             predict_rewards=True, 
             device=device, 
             batch_norm=reward_batch_norm,
             hidden_dim=fc_hidden_dim,
-            dropout=dropout).to(device)
+            dropout=value_dropout).to(device)
         self.return_model = ValuePredictionModel(
-            embed_size, 
+            self.value_input_size, 
             predict_rewards=False, 
             device=device, 
             batch_norm=reward_batch_norm,
             hidden_dim=fc_hidden_dim,
-            dropout=dropout).to(device)
+            dropout=value_dropout).to(device)
         self.action_model = ActionPredictionModel(
             embed_size, 
             2, 
@@ -528,13 +551,13 @@ class MultitaskDynamicsModel:
             training_fraction=action_training_fraction, 
             dropout=dropout).to(device)
         self.subsequent_model = SubsequentBinaryPredictionModel(
-            embed_size, 
+            self.value_input_size, 
             device=device, 
             training_fraction=action_training_fraction,
             hidden_dim=fc_hidden_dim, 
             dropout=dropout).to(device)
         self.termination_model = TerminationPredictionModel(
-            embed_size, 
+            self.value_input_size, 
             dropout=dropout, 
             hidden_dim=fc_hidden_dim,
             device=device).to(device)
@@ -542,7 +565,9 @@ class MultitaskDynamicsModel:
         self.overall_model = nn.ModuleList([
             self.model, 
             self.current_state_model, 
-            self.next_state_model, 
+            self.next_state_model] + (
+                [self.value_input] if self.value_input is not None else []
+            ) + [
             self.reward_model, 
             self.return_model, 
             self.action_model, 
@@ -587,6 +612,8 @@ class MultitaskDynamicsModel:
             assert self.replacement_values is not None
             should_mask = torch.logical_and(torch.rand(*obs.shape).to(self.device) < self.mask_prob, ~missing)
             masked_obs = torch.where(should_mask, torch.from_numpy(self.replacement_values).float().to(self.device), obs)
+        else:
+            masked_obs = obs
 
         # Run transformer
         _, initial_embed, final_embed = self.model(masked_obs, dem, ac, src_mask)
@@ -599,12 +626,15 @@ class MultitaskDynamicsModel:
         pred_next = self.next_state_model(final_embed)
         next_state_loss = self.next_state_model.compute_loss(batch, pred_next)
         
+        val_final_input = final_embed if self.value_input is None else F.leaky_relu(self.value_input(final_embed))
+        val_initial_input = initial_embed if self.value_input is None else F.leaky_relu(self.value_input(initial_embed))
+        
         # 3. Reward model
-        pred_reward = self.reward_model(final_embed)
+        pred_reward = self.reward_model(val_final_input)
         reward_loss = self.reward_model.compute_loss(batch, pred_reward)
         
         # 4. Return model
-        pred_return = self.return_model(final_embed)
+        pred_return = self.return_model(val_final_input)
         return_loss = self.return_model.compute_loss(batch, pred_return)
 
         # 5. Consistency loss
@@ -619,14 +649,14 @@ class MultitaskDynamicsModel:
         action_loss = self.action_model.compute_loss(action_batch, pred_action)
         
         # 7. Is subsequent action loss
-        subsequent_batch = self.subsequent_model.create_batch(final_embed, initial_embed, in_lens)
+        subsequent_batch = self.subsequent_model.create_batch(val_final_input, val_initial_input, in_lens)
         pred_subs = self.subsequent_model(subsequent_batch[0], subsequent_batch[1])
         subs_loss = self.subsequent_model.compute_loss(subsequent_batch, pred_subs)
         subs_correct = (torch.round(torch.sigmoid(pred_subs)) == subsequent_batch[2]).sum().item()
         subs_total = subsequent_batch[2].shape[0]
         
         # 8. Termination model
-        pred_term = self.termination_model(final_embed)
+        pred_term = self.termination_model(val_final_input)
         term_loss, corr, tot = self.termination_model.compute_loss(batch, pred_term)
         term_correct = corr
         term_total = tot
