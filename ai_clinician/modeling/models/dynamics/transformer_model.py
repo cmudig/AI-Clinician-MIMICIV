@@ -324,7 +324,7 @@ class TerminationPredictionModel(nn.Module):
         super().__init__()
         self.embed_dim = embed_dim
         self.net = FullyConnected2Layer(embed_dim, hidden_dim, 1, dropout=dropout)
-        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
         self.device = device
         
     def forward(self, embedding):
