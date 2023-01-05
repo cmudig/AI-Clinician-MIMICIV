@@ -527,7 +527,7 @@ class MultitaskDynamicsModel:
             device=device).to(device)
         self.value_input_size = value_input_size
         if self.value_input_size < embed_size:
-            self.value_input = nn.Linear(embed_size, self.value_input_size)
+            self.value_input = nn.Linear(embed_size, self.value_input_size).to(device)
         else:
             self.value_input = None
         self.reward_model = ValuePredictionModel(
