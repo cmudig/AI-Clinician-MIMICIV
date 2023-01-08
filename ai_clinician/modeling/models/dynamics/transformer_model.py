@@ -617,13 +617,15 @@ class MultitaskDynamicsModel:
 
         if mask:
             assert self.replacement_values is not None
-            should_mask = torch.logical_and(torch.rand(*obs.shape).to(self.device) < self.mask_prob, ~missing)
+            should_mask = torch.logical_or(torch.rand(*obs.shape).to(self.device) < self.mask_prob, missing)
             masked_obs = torch.where(should_mask, torch.from_numpy(self.replacement_values).float().to(self.device), obs)
+            should_mask = should_mask.float()
         else:
             masked_obs = obs
+            should_mask = torch.zeros_like(obs)
 
         # Run transformer
-        _, initial_embed, final_embed = self.model(masked_obs, dem, ac, src_mask)
+        _, initial_embed, final_embed = self.model(torch.cat((masked_obs, should_mask), 2), dem, ac, src_mask)
         
         # 1. Masked prediction model
         pred_curr = self.current_state_model(initial_embed)
