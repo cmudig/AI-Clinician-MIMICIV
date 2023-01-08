@@ -201,7 +201,7 @@ def pad_collate(batch):
     padded_arrays = [pad_sequence(xx, batch_first=True, padding_value=0) for xx in arrays_to_pad]
     return (*padded_arrays, torch.LongTensor(x_lens))
 
-def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, val_size=0.15):
+def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, val_size=0.15, imputed_data=None):
     """
     Args:
         dataset: a dataframe containing all the state and most of the demographics
@@ -213,6 +213,8 @@ def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, 
             test split (if train_test_split is None).
         val_size: Fraction of the entire dataset that should be used for the
             val split (if train_test_split is None).
+        imputed_data: If not None, a tuple of dataframes containing a (train, val, and test)
+            copy of the observation dataset matching the existing train_test_split_ids.
     """
     # Make miscellaneous adjustments, remove patients with no recorded weight and who have only one timestep
     print("Cleaning dataset")
@@ -240,9 +242,17 @@ def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, 
         train_ids, val_ids = train_test_split(train_ids, test_size=val_size * len(icuuniqueids) / len(train_ids))
     print("Train test split sizes:", len(train_ids), len(val_ids), len(test_ids))
     
-    train_dataset = dataset[dataset[C_ICUSTAYID].isin(train_ids)]
-    val_dataset = dataset[dataset[C_ICUSTAYID].isin(val_ids)]
-    test_dataset = dataset[dataset[C_ICUSTAYID].isin(test_ids)]
+    train_dataset = dataset[dataset[C_ICUSTAYID].isin(train_ids)].reset_index(drop=True)
+    val_dataset = dataset[dataset[C_ICUSTAYID].isin(val_ids)].reset_index(drop=True)
+    test_dataset = dataset[dataset[C_ICUSTAYID].isin(test_ids)].reset_index(drop=True)
+    
+    if imputed_data is not None:
+        train_imputed, val_imputed, test_imputed = imputed_data
+        print("Substituting with imputed data. Current NaN fraction in obs columns:", pd.isna(train_dataset[ALL_FEATURE_COLUMNS]).mean())
+        train_dataset[ALL_FEATURE_COLUMNS] = train_imputed[ALL_FEATURE_COLUMNS].reset_index(drop=True)
+        val_dataset[ALL_FEATURE_COLUMNS] = val_imputed[ALL_FEATURE_COLUMNS].reset_index(drop=True)
+        test_dataset[ALL_FEATURE_COLUMNS] = test_imputed[ALL_FEATURE_COLUMNS].reset_index(drop=True)
+        print("New NaN fraction in obs columns:", pd.isna(train_dataset[ALL_FEATURE_COLUMNS]).mean())
 
     # Create demog table
     print("Creating demog table")
@@ -273,7 +283,7 @@ def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, 
     train_actions = raw_actions[dataset[C_ICUSTAYID].isin(train_ids)].values
     val_actions = raw_actions[dataset[C_ICUSTAYID].isin(val_ids)].values
     test_actions = raw_actions[dataset[C_ICUSTAYID].isin(test_ids)].values
-
+        
     print("Fitting normalization parameters")
     normer = DynamicsDataNormalizer(train_dataset, train_demog, train_actions)
 
