@@ -18,6 +18,7 @@ from __future__ import division
 
 import numpy as np
 from scipy import linalg
+import torch
 
 from sklearn.base import TransformerMixin, BaseEstimator
 from sklearn.utils.validation import check_is_fitted
@@ -48,6 +49,10 @@ class ZCA(BaseEstimator, TransformerMixin):
         s = np.diag(s)
         self.whiten_ = np.dot(np.dot(U, s_inv), U.T)
         self.dewhiten_ = np.dot(np.dot(U, s), U.T)
+        
+        self.mean_tensor_ = torch.FloatTensor(self.mean_)
+        self.whiten_tensor_ = torch.FloatTensor(self.whiten_)
+        self.dewhiten_tensor_ = torch.FloatTensor(self.dewhiten_)
         return self
 
     def transform(self, X, y=None, copy=None):
@@ -58,6 +63,9 @@ class ZCA(BaseEstimator, TransformerMixin):
             The data to whiten along the features axis.
         """
         check_is_fitted(self, 'mean_')
+        if isinstance(X, torch.Tensor):
+            X = X.float()
+            return torch.matmul(X - self.mean_tensor_, self.whiten_tensor_.transpose(0, 1))
         X = as_float_array(X, copy=self.copy)
         return np.dot(X - self.mean_, self.whiten_.T)
 
@@ -71,4 +79,7 @@ class ZCA(BaseEstimator, TransformerMixin):
         """
         check_is_fitted(self, 'mean_')
         X = as_float_array(X, copy=self.copy)
+        if isinstance(X, torch.Tensor):
+            X = X.float()
+            return torch.matmul(X, self.dewhiten_tensor_) + self.mean_tensor_
         return np.dot(X, self.dewhiten_) + self.mean_

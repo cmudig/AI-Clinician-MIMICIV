@@ -16,10 +16,13 @@ import torch.nn.init as weight_init
 from torch.optim import Adam
 
 class TransformerLatentSpaceModel(nn.Module):
-    def __init__(self, embed_dim, nhead, nlayers, dropout):
+    def __init__(self, embed_dim, nhead, nlayers, dropout, positional_encoding=True):
         super().__init__()
         self.encoder_layers = []
         self.norm_layers = []
+        self.positional_encoding = positional_encoding
+        if positional_encoding:
+            self.pos_encoder = PositionalEncoding(embed_dim, dropout)
         for i in range(nlayers):
             l = nn.MultiheadAttention(embed_dim, nhead, dropout=dropout)
             norm = nn.LayerNorm(embed_dim)
@@ -48,7 +51,8 @@ class TransformerLatentSpaceModel(nn.Module):
             output Tensor of shape [batch_size, seqlen, embed_dim]
         """
         src = src.permute(1, 0, 2) # .reshape((-1, seq_len, src.size(2)))
-        # src = self.pos_encoder(src)
+        if self.positional_encoding:
+            src = self.pos_encoder(src)
         for l, norm in zip(self.encoder_layers, self.norm_layers):
             transformed, _ = l(src, src, src, attn_mask=src_mask[:src.size(0),:src.size(0)])
             src = norm(transformed + src)
@@ -63,7 +67,7 @@ class TransformerDynamicsModel(nn.Module):
     """
 
     def __init__(self, state_dim, demog_dim, action_dim, embed_dim, nhead,
-                 nlayers, dropout = 0.5, device='cpu'):
+                 nlayers, dropout = 0.5, device='cpu', positional_encoding=True):
         super().__init__()
         self.model_type = 'Transformer'
         self.state_dim = state_dim
@@ -76,8 +80,8 @@ class TransformerDynamicsModel(nn.Module):
         self.state_demog = nn.Linear(embed_dim * 2, embed_dim)
         self.action_embedding = nn.Linear(action_dim, embed_dim) # Incorporate the actions at a later layer so we have a state-only embedding
         self.state_action = nn.Linear(embed_dim * 2, embed_dim)
-        self.state_transformer = TransformerLatentSpaceModel(embed_dim, nhead, nlayers, dropout)
-        self.state_action_transformer = TransformerLatentSpaceModel(embed_dim, nhead, nlayers, dropout)
+        self.state_transformer = TransformerLatentSpaceModel(embed_dim, nhead, nlayers, dropout, positional_encoding=positional_encoding)
+        self.state_action_transformer = TransformerLatentSpaceModel(embed_dim, nhead, nlayers, dropout, positional_encoding=False)
         self.device = device
 
         self.init_weights()
@@ -136,7 +140,7 @@ def generate_square_subsequent_mask(sz):
 
 class PositionalEncoding(nn.Module):
 
-    def __init__(self, d_model, dropout = 0.1, max_len = 5000):
+    def __init__(self, d_model, dropout = 0.1, max_len = 5000, weight=0.1):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
 
@@ -146,13 +150,14 @@ class PositionalEncoding(nn.Module):
         pe[:, 0, 0::2] = torch.sin(position * div_term)
         pe[:, 0, 1::2] = torch.cos(position * div_term)
         self.register_buffer('pe', pe)
+        self.weight = weight
 
     def forward(self, x):
         """
         Args:
             x: Tensor, shape [seq_len, batch_size, embedding_dim]
         """
-        x = x + self.pe[:x.size(0)]
+        x = x + self.weight * self.pe[:x.size(0)]
         return self.dropout(x)
     
 ### Pretext Tasks
@@ -215,7 +220,7 @@ class StatePredictionModel(nn.Module):
             return output_mu
         else:
             logvar = self.variance_decoder(embedding)
-            return output_mu, logvar, torch.distributions.Normal(output_mu, F.softplus(logvar) ** 0.5)
+            return output_mu, logvar, torch.distributions.Normal(output_mu, F.softplus(logvar)) # ** 0.5)
     
     def compute_loss(self, in_batch, model_outputs):
         """
@@ -256,7 +261,7 @@ class StatePredictionModel(nn.Module):
             else:
                 timestep_weights = torch.ones_like(next_state_vec).to(self.device)
             neg_log_likelihood = -distro.log_prob(next_state_vec)
-            overall_loss = neg_log_likelihood + self.variance_regularizer * (F.softplus(logvar) ** 0.5)
+            overall_loss = neg_log_likelihood + self.variance_regularizer * torch.log(F.softplus(logvar)) # ** 0.5)
             overall_loss *= timestep_weights
             
         loss_mask = torch.logical_and(torch.arange(L)[None, :, None].to(self.device) < seq_lens[:, None, None] - self.num_steps,
@@ -490,6 +495,7 @@ class MultitaskDynamicsModel:
                  embed_size=512,
                  nlayers=3,
                  nhead=4,
+                 positional_encoding=True,
                  dropout=0.0,
                  value_dropout=0.1,
                  value_input_size=512,
@@ -511,7 +517,8 @@ class MultitaskDynamicsModel:
             nhead, 
             nlayers, 
             dropout, 
-            device=device).to(device)
+            device=device,
+            positional_encoding=positional_encoding).to(device)
 
         self.current_state_model = StatePredictionModel(
             obs_size, 
