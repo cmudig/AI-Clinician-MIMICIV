@@ -241,25 +241,19 @@ class StatePredictionModel(nn.Module):
         if self.num_steps > 0:
             next_state_vec = torch.cat((next_state_vec, torch.zeros(next_state_vec.shape[0], self.num_steps, next_state_vec.shape[2]).to(self.device)), 1)
 
+        if self.predict_delta:
+            timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
+        else:
+            timestep_weights = self.timestep_weight_eps + (next_state_vec - in_state) ** 2 # torch.ones_like(next_state_vec).to(self.device)
+
         if self.target_transform is not None:
             next_state_vec = self.target_transform(next_state_vec)
             
         if self.discrete or not self.predict_variance:
-            overall_loss = self.loss_fn(model_outputs, next_state_vec)
-        elif not self.predict_variance:
-            if self.predict_delta:
-                timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
-            else:
-                timestep_weights = torch.ones_like(next_state_vec).to(self.device)
-            overall_loss = self.loss_fn(model_outputs, next_state_vec)
-            overall_loss *= timestep_weights
+            overall_loss = self.loss_fn(model_outputs, next_state_vec) * timestep_weights
         else:    
             mu, logvar, distro = model_outputs
             
-            if self.predict_delta:
-                timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
-            else:
-                timestep_weights = torch.ones_like(next_state_vec).to(self.device)
             neg_log_likelihood = -distro.log_prob(next_state_vec)
             overall_loss = neg_log_likelihood + self.variance_regularizer * torch.log(F.softplus(logvar)) # ** 0.5)
             overall_loss *= timestep_weights
@@ -656,9 +650,9 @@ class MultitaskDynamicsModel:
         embed_in = torch.cat((masked_obs, should_mask), 2) if self.boolean_mask_as_input else masked_obs
         _, initial_embed, final_embed = self.model(embed_in, dem, ac, src_mask)
         
-        # 1. Masked prediction model
-        pred_curr = self.current_state_model(initial_embed)
-        curr_state_loss = self.current_state_model.compute_loss(batch, pred_curr)
+        # # 1. Masked prediction model
+        # pred_curr = self.current_state_model(initial_embed)
+        # curr_state_loss = self.current_state_model.compute_loss(batch, pred_curr)
         
         # 2. Next-state prediction model
         pred_next = self.next_state_model(final_embed)
@@ -671,9 +665,9 @@ class MultitaskDynamicsModel:
         pred_reward = self.reward_model(val_final_input)
         reward_loss = self.reward_model.compute_loss(batch, pred_reward)
         
-        # 4. Return model
-        pred_return = self.return_model(val_final_input)
-        return_loss = self.return_model.compute_loss(batch, pred_return)
+        # # 4. Return model
+        # pred_return = self.return_model(val_final_input)
+        # return_loss = self.return_model.compute_loss(batch, pred_return)
 
         # 5. Consistency loss
         c_loss = self._consistency_loss(final_embed, initial_embed)
@@ -686,12 +680,14 @@ class MultitaskDynamicsModel:
         pred_action = self.action_model(action_batch[0])
         action_loss = self.action_model.compute_loss(action_batch, pred_action)
         
-        # 7. Is subsequent action loss
-        subsequent_batch = self.subsequent_model.create_batch(val_final_input, val_initial_input, in_lens)
-        pred_subs = self.subsequent_model(subsequent_batch[0], subsequent_batch[1])
-        subs_loss = self.subsequent_model.compute_loss(subsequent_batch, pred_subs)
-        subs_correct = (torch.round(torch.sigmoid(pred_subs)) == subsequent_batch[2]).sum().item()
-        subs_total = subsequent_batch[2].shape[0]
+        # # 7. Is subsequent action loss
+        # subsequent_batch = self.subsequent_model.create_batch(val_final_input, val_initial_input, in_lens)
+        # pred_subs = self.subsequent_model(subsequent_batch[0], subsequent_batch[1])
+        # subs_loss = self.subsequent_model.compute_loss(subsequent_batch, pred_subs)
+        # subs_correct = (torch.round(torch.sigmoid(pred_subs)) == subsequent_batch[2]).sum().item()
+        # subs_total = subsequent_batch[2].shape[0]
+        subs_correct = 0
+        subs_total = 1
         
         # 8. Termination model
         pred_term = self.termination_model(val_final_input)
@@ -699,14 +695,14 @@ class MultitaskDynamicsModel:
         term_correct = corr
         term_total = tot
 
-        itemized_loss = self.loss_weights * torch.stack((
-            curr_state_loss, 
+        itemized_loss = self.loss_weights[[1, 3, 4, 5, 7]] * torch.stack((
+            # curr_state_loss, 
             next_state_loss, 
             reward_loss, 
-            return_loss, 
+            # return_loss, 
             c_loss, 
             action_loss, 
-            subs_loss, 
+            # subs_loss, 
             term_loss
         ))
         
