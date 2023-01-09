@@ -719,6 +719,7 @@ class MultitaskDynamicsModel:
             "dynamics": self.model.state_dict(),
             "current_state": self.current_state_model.state_dict(),
             "next_state": self.next_state_model.state_dict(),
+            "value_input": self.value_input.state_dict(),
             "reward": self.reward_model.state_dict(),
             "return": self.return_model.state_dict(),
             "action": self.action_model.state_dict(),
