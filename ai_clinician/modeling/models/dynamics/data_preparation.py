@@ -102,7 +102,7 @@ class DataNormalization:
         unnormed[:,len(self.norm_columns):] = self._inverse_log_transform(unnormed[:,len(self.norm_columns):])
         return pd.DataFrame(np.hstack([no_norm_scores, unnormed]), columns=self.as_is_columns + self.norm_columns + self.log_norm_columns)
         
-REWARD_VAL = 10
+REWARD_VAL = 5
 
 class DynamicsDataNormalizer:
     def __init__(self, obs, demog, actions, _loaded_data=None):
@@ -131,6 +131,9 @@ class DynamicsDataNormalizer:
     
     def inverse_transform_obs(self, obs):
         return self.obs_norm.inverse_transform(obs)
+    
+    def inverse_transform_dem(self, dem):
+        return self.demog_norm.inverse_transform(dem)
     
     def transform_action(self, actions, fit=False):
         actions_train = np.log(1 + actions)
