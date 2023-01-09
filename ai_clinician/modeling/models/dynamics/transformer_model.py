@@ -244,7 +244,7 @@ class StatePredictionModel(nn.Module):
         if self.predict_delta:
             timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
         else:
-            timestep_weights = self.timestep_weight_eps + (next_state_vec - in_state) ** 2 # torch.ones_like(next_state_vec).to(self.device)
+            timestep_weights = torch.clamp(self.timestep_weight_eps + next_state_vec ** 2, max=10.0) # torch.ones_like(next_state_vec).to(self.device)
 
         if self.target_transform is not None:
             next_state_vec = self.target_transform(next_state_vec)
@@ -254,7 +254,7 @@ class StatePredictionModel(nn.Module):
         else:    
             mu, logvar, distro = model_outputs
             
-            neg_log_likelihood = -distro.log_prob(next_state_vec)
+            neg_log_likelihood = -distro.log_prob(next_state_vec) + torch.clamp(0.5 * distro.log_prob(in_state), min=-10)
             overall_loss = neg_log_likelihood + self.variance_regularizer * torch.log(F.softplus(logvar)) # ** 0.5)
             overall_loss *= timestep_weights
             
@@ -538,6 +538,7 @@ class MultitaskDynamicsModel:
             predict_variance=predict_variance,
             variance_regularizer=variance_regularizer,
             num_steps=0, 
+            num_layers=3,
             device=device).to(device)
         self.next_state_model = StatePredictionModel(
             obs_size, 
@@ -546,6 +547,7 @@ class MultitaskDynamicsModel:
             predict_variance=predict_variance,
             variance_regularizer=variance_regularizer,
             num_steps=1, 
+            num_layers=3,
             device=device).to(device)
         self.value_input_size = value_input_size
         if self.value_input_size < embed_size:
@@ -659,11 +661,11 @@ class MultitaskDynamicsModel:
         next_state_loss = self.next_state_model.compute_loss(batch, pred_next)
         
         val_final_input = final_embed if self.value_input is None else F.leaky_relu(self.value_input(final_embed))
-        val_initial_input = initial_embed if self.value_input is None else F.leaky_relu(self.value_input(initial_embed))
+        # val_initial_input = initial_embed if self.value_input is None else F.leaky_relu(self.value_input(initial_embed))
         
         # 3. Reward model
-        pred_reward = self.reward_model(val_final_input)
-        reward_loss = self.reward_model.compute_loss(batch, pred_reward)
+        # pred_reward = self.reward_model(val_final_input)
+        # reward_loss = self.reward_model.compute_loss(batch, pred_reward)
         
         # # 4. Return model
         # pred_return = self.return_model(val_final_input)
@@ -695,10 +697,10 @@ class MultitaskDynamicsModel:
         term_correct = corr
         term_total = tot
 
-        itemized_loss = self.loss_weights[[1, 3, 4, 5, 7]] * torch.stack((
+        itemized_loss = self.loss_weights[[1, 4, 5, 7]] * torch.stack((
             # curr_state_loss, 
             next_state_loss, 
-            reward_loss, 
+            # reward_loss, 
             # return_loss, 
             c_loss, 
             action_loss, 
