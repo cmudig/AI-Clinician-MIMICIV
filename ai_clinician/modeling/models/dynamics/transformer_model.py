@@ -645,7 +645,7 @@ class MultitaskDynamicsModel:
         should_mask = torch.zeros_like(obs)
         if corrupt_inputs:
             if self.input_noise_scale is not None:
-                masked_obs = masked_obs + (torch.randn(masked_obs.shape) * self.input_noise_scale)
+                masked_obs = masked_obs + (torch.randn(masked_obs.shape) * self.input_noise_scale).to(self.device)
             if self.mask_prob > 0.0:
                 assert self.replacement_values is not None
                 should_mask = torch.logical_or(torch.rand(*obs.shape).to(self.device) < self.mask_prob, missing)
