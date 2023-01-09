@@ -514,6 +514,7 @@ class MultitaskDynamicsModel:
                  action_training_fraction=0.2,
                  batch_size=32,
                  max_seq_len=160,
+                 boolean_mask_as_input=False,
                  reward_batch_norm=True,
                  predict_variance=False,
                  variance_regularizer=0.0,
@@ -524,7 +525,7 @@ class MultitaskDynamicsModel:
         
         super().__init__()
         self.model = TransformerDynamicsModel(
-            obs_size * 2, 
+            obs_size * 2 if boolean_mask_as_input else obs_size, 
             dem_size,
             2, 
             embed_size, 
@@ -533,6 +534,7 @@ class MultitaskDynamicsModel:
             dropout, 
             device=device,
             positional_encoding=positional_encoding).to(device)
+        self.boolean_mask_as_input = boolean_mask_as_input
 
         self.current_state_model = StatePredictionModel(
             obs_size, 
@@ -647,7 +649,8 @@ class MultitaskDynamicsModel:
             should_mask = torch.zeros_like(obs)
 
         # Run transformer
-        _, initial_embed, final_embed = self.model(torch.cat((masked_obs, should_mask), 2), dem, ac, src_mask)
+        embed_in = torch.cat((masked_obs, should_mask), 2) if self.boolean_mask_as_input else masked_obs
+        _, initial_embed, final_embed = self.model(embed_in, dem, ac, src_mask)
         
         # 1. Masked prediction model
         pred_curr = self.current_state_model(initial_embed)
