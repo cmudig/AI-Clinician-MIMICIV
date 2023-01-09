@@ -520,6 +520,7 @@ class MultitaskDynamicsModel:
                  variance_regularizer=0.0,
                  fc_hidden_dim=16,
                  mask_prob=0.5,
+                 input_noise_scale=None,
                  device='cpu',
                  replacement_values=None):
         
@@ -612,6 +613,7 @@ class MultitaskDynamicsModel:
         self.max_seq_len = max_seq_len
         self.mask_prob = mask_prob
         self.replacement_values = replacement_values
+        self.input_noise_scale = input_noise_scale
         
         self.loss_weights = (torch.FloatTensor([1, 1, 0.2, 0.05, 1, 1, 1, 1]) * 0.1).to(device)
         
@@ -625,7 +627,7 @@ class MultitaskDynamicsModel:
                                      self.consistency_offset, 
                                      final_embed.shape[2]).to(self.device)), 1)
         
-    def compute_loss(self, batch, mask=True, return_elements=False, return_accuracies=False):
+    def compute_loss(self, batch, corrupt_inputs=True, return_elements=False, return_accuracies=False):
         obs, dem, ac, missing, rewards, discounted_rewards, in_lens = batch
         
         src_mask = generate_square_subsequent_mask(self.max_seq_len).to(self.device) # torch.ones(seq_len, seq_len).to(device)
@@ -639,14 +641,16 @@ class MultitaskDynamicsModel:
         in_lens = in_lens.to(self.device)
         batch = (obs, dem, ac, missing, rewards, discounted_rewards, in_lens)
 
-        if mask:
-            assert self.replacement_values is not None
-            should_mask = torch.logical_or(torch.rand(*obs.shape).to(self.device) < self.mask_prob, missing)
-            masked_obs = torch.where(should_mask, torch.from_numpy(self.replacement_values).float().to(self.device), obs)
-            should_mask = should_mask.float()
-        else:
-            masked_obs = obs
-            should_mask = torch.zeros_like(obs)
+        masked_obs = obs
+        should_mask = torch.zeros_like(obs)
+        if corrupt_inputs:
+            if self.input_noise_scale is not None:
+                masked_obs = masked_obs + (torch.randn(masked_obs.shape) * self.input_noise_scale)
+            if self.mask_prob > 0.0:
+                assert self.replacement_values is not None
+                should_mask = torch.logical_or(torch.rand(*obs.shape).to(self.device) < self.mask_prob, missing)
+                masked_obs = torch.where(should_mask, torch.from_numpy(self.replacement_values).float().to(self.device), obs)
+                should_mask = should_mask.float()
 
         # Run transformer
         embed_in = torch.cat((masked_obs, should_mask), 2) if self.boolean_mask_as_input else masked_obs
