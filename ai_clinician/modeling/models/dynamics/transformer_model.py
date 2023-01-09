@@ -186,13 +186,13 @@ class StatePredictionModel(nn.Module):
         self.decoder = nn.ModuleList([nn.Linear(embed_dim, embed_dim) for _ in range(num_layers - 1)] + [nn.Linear(embed_dim, state_dim)])
         self.discrete = discrete
         self.predict_variance = predict_variance
+        self.timestep_weight_eps = timestep_weight_eps
         if loss_fn is not None:
             self.loss_fn = loss_fn
         elif not self.discrete:
             if self.predict_variance:
                 self.variance_decoder = nn.Linear(embed_dim, state_dim)
                 self.variance_regularizer = variance_regularizer
-                self.timestep_weight_eps = timestep_weight_eps
                 self.loss_fn = None
             else:
                 self.loss_fn = nn.MSELoss(reduction='none')
