@@ -127,12 +127,19 @@ class TransformerDynamicsModel(nn.Module):
         # Run through the FIRST transformer
         state_embed = self.state_transformer(initial_embed, src_mask)
         
-        action_embed = self.action_embedding(action)
-        sa_embed = self.state_action(torch.cat((initial_embed, action_embed), 2))
-        
-        final_embed = self.state_action_transformer(sa_embed, src_mask)
-        
+        final_embed = self.unroll_from_embedding(state_embed, action, src_mask)
+                
         return initial_embed, state_embed, final_embed
+    
+    def unroll_from_embedding(self, state_embed, action, src_mask):
+        """
+        Produces a state-action embedding from a state-only embedding and an action.
+        """
+        action_embed = self.action_embedding(action)
+        sa_embed = self.state_action(torch.cat((state_embed, action_embed), 2))
+        
+        return self.state_action_transformer(sa_embed, src_mask)
+
 
 def generate_square_subsequent_mask(sz):
     """Generates an upper-triangular matrix of -inf, with zeros on diag."""
@@ -353,7 +360,7 @@ class TerminationPredictionModel(nn.Module):
         labels = (torch.arange(L).to(self.device)[None, :] == seq_lens[:, None] - 1).float()
         
         loss = self.loss_fn(model_outputs.squeeze(2), labels)
-        loss_weights = (labels * (0.5 * seq_lens[:, None]) + (1 - labels) * (0.5 * seq_lens[:, None] / (seq_lens[:, None] - 1))).to(self.device)
+        loss_weights = (labels * (0.5 * seq_lens[:, None]) + (1 - labels) * (0.5 * seq_lens[:, None] / (torch.clamp(seq_lens[:, None] - 1, min=1)))).to(self.device)
         loss *= loss_weights
         
         loss_mask = torch.arange(L).to(self.device)[None, :] < seq_lens[:, None]
@@ -515,6 +522,7 @@ class MultitaskDynamicsModel:
                  fc_hidden_dim=16,
                  mask_prob=0.5,
                  input_noise_scale=None,
+                 num_unrolling_steps=1,
                  device='cpu',
                  replacement_values=None):
         
@@ -615,6 +623,7 @@ class MultitaskDynamicsModel:
         
         self.consistency_offset = 1
         self.consistency_subloss = nn.MSELoss(reduction='none')
+        self.num_unrolling_steps = num_unrolling_steps
 
     def _consistency_loss(self, final_embed, initial_embed):
         return torch.cat((self.consistency_subloss(final_embed[:,:-self.consistency_offset],
@@ -648,65 +657,104 @@ class MultitaskDynamicsModel:
                 masked_obs = torch.where(should_mask, torch.from_numpy(self.replacement_values).float().to(self.device), obs)
                 should_mask = should_mask.float()
 
-        # Run transformer
-        embed_in = torch.cat((masked_obs, should_mask), 2) if self.boolean_mask_as_input else masked_obs
-        _, initial_embed, final_embed = self.model(embed_in, dem, ac, src_mask)
-        
-        # # 1. Masked prediction model
-        # pred_curr = self.current_state_model(initial_embed)
-        # curr_state_loss = self.current_state_model.compute_loss(batch, pred_curr)
-        
-        # 2. Next-state prediction model
-        pred_next = self.next_state_model(final_embed)
-        next_state_loss = self.next_state_model.compute_loss(batch, pred_next)
-        
-        val_final_input = final_embed if self.value_input is None else F.leaky_relu(self.value_input(final_embed))
-        # val_initial_input = initial_embed if self.value_input is None else F.leaky_relu(self.value_input(initial_embed))
-        
-        # 3. Reward model
-        # pred_reward = self.reward_model(val_final_input)
-        # reward_loss = self.reward_model.compute_loss(batch, pred_reward)
-        
-        # # 4. Return model
-        # pred_return = self.return_model(val_final_input)
-        # return_loss = self.return_model.compute_loss(batch, pred_return)
+        if self.num_unrolling_steps > 1:
+            assert not self.boolean_mask_as_input
+            
+            itemized_loss = torch.zeros(2)
+            initial_embed = None
+            for step in range(self.num_unrolling_steps):
+                if initial_embed is None:
+                    _, _, final_embed = self.model(masked_obs, dem, ac, src_mask)
+                else:
+                    final_embed = self.model.unroll_from_embedding(initial_embed[:,:-1,:], ac[:,step:,:], src_mask)
+                unroll_batch = (obs[:,step:,:], 
+                                dem[:,step:,:], 
+                                ac[:,step:,:], 
+                                missing[:,step:,:], 
+                                rewards[:,step:], 
+                                discounted_rewards[:,step:], 
+                                in_lens - step)
+                
+                # 2. Next-state prediction model
+                pred_next = self.next_state_model(final_embed)
+                next_state_loss = self.next_state_model.compute_loss(unroll_batch, pred_next)
+                
+                val_final_input = final_embed if self.value_input is None else F.leaky_relu(self.value_input(final_embed))
+                subs_correct = 0
+                subs_total = 1
+                
+                # 8. Termination model
+                pred_term = self.termination_model(val_final_input)
+                term_loss, corr, tot = self.termination_model.compute_loss(unroll_batch, pred_term)
+                term_correct = corr
+                term_total = tot
 
-        # 5. Consistency loss
-        c_loss = self._consistency_loss(final_embed, initial_embed)
-        loss_mask = torch.arange(c_loss.shape[1])[None, :, None].to(self.device) < in_lens[:, None, None]
-        c_loss_masked = c_loss.where(loss_mask, torch.tensor(0.0).to(self.device))
-        c_loss = c_loss_masked.sum() / loss_mask.sum()
-        
-        # 6. Action prediction loss
-        action_batch = self.action_model.create_batch(initial_embed, in_lens, ac)
-        pred_action = self.action_model(action_batch[0])
-        action_loss = self.action_model.compute_loss(action_batch, pred_action)
-        
-        # # 7. Is subsequent action loss
-        # subsequent_batch = self.subsequent_model.create_batch(val_final_input, val_initial_input, in_lens)
-        # pred_subs = self.subsequent_model(subsequent_batch[0], subsequent_batch[1])
-        # subs_loss = self.subsequent_model.compute_loss(subsequent_batch, pred_subs)
-        # subs_correct = (torch.round(torch.sigmoid(pred_subs)) == subsequent_batch[2]).sum().item()
-        # subs_total = subsequent_batch[2].shape[0]
-        subs_correct = 0
-        subs_total = 1
-        
-        # 8. Termination model
-        pred_term = self.termination_model(val_final_input)
-        term_loss, corr, tot = self.termination_model.compute_loss(batch, pred_term)
-        term_correct = corr
-        term_total = tot
+                itemized_loss += self.loss_weights[[1, 7]] * torch.stack((
+                    next_state_loss, 
+                    term_loss
+                ))
+                
+                initial_embed = final_embed
+        else:
+            # Run transformer
+            embed_in = torch.cat((masked_obs, should_mask), 2) if self.boolean_mask_as_input else masked_obs
+            _, initial_embed, final_embed = self.model(embed_in, dem, ac, src_mask)
+            
+            # # 1. Masked prediction model
+            # pred_curr = self.current_state_model(initial_embed)
+            # curr_state_loss = self.current_state_model.compute_loss(batch, pred_curr)
+            
+            # 2. Next-state prediction model
+            pred_next = self.next_state_model(final_embed)
+            next_state_loss = self.next_state_model.compute_loss(batch, pred_next)
+            
+            val_final_input = final_embed if self.value_input is None else F.leaky_relu(self.value_input(final_embed))
+            # val_initial_input = initial_embed if self.value_input is None else F.leaky_relu(self.value_input(initial_embed))
+            
+            # 3. Reward model
+            # pred_reward = self.reward_model(val_final_input)
+            # reward_loss = self.reward_model.compute_loss(batch, pred_reward)
+            
+            # # 4. Return model
+            # pred_return = self.return_model(val_final_input)
+            # return_loss = self.return_model.compute_loss(batch, pred_return)
 
-        itemized_loss = self.loss_weights[[1, 4, 5, 7]] * torch.stack((
-            # curr_state_loss, 
-            next_state_loss, 
-            # reward_loss, 
-            # return_loss, 
-            c_loss, 
-            action_loss, 
-            # subs_loss, 
-            term_loss
-        ))
+            # 5. Consistency loss
+            # c_loss = self._consistency_loss(final_embed, initial_embed)
+            # loss_mask = torch.arange(c_loss.shape[1])[None, :, None].to(self.device) < in_lens[:, None, None]
+            # c_loss_masked = c_loss.where(loss_mask, torch.tensor(0.0).to(self.device))
+            # c_loss = c_loss_masked.sum() / loss_mask.sum()
+            
+            # 6. Action prediction loss
+            # action_batch = self.action_model.create_batch(initial_embed, in_lens, ac)
+            # pred_action = self.action_model(action_batch[0])
+            # action_loss = self.action_model.compute_loss(action_batch, pred_action)
+            
+            # # 7. Is subsequent action loss
+            # subsequent_batch = self.subsequent_model.create_batch(val_final_input, val_initial_input, in_lens)
+            # pred_subs = self.subsequent_model(subsequent_batch[0], subsequent_batch[1])
+            # subs_loss = self.subsequent_model.compute_loss(subsequent_batch, pred_subs)
+            # subs_correct = (torch.round(torch.sigmoid(pred_subs)) == subsequent_batch[2]).sum().item()
+            # subs_total = subsequent_batch[2].shape[0]
+            subs_correct = 0
+            subs_total = 1
+            
+            # 8. Termination model
+            pred_term = self.termination_model(val_final_input)
+            term_loss, corr, tot = self.termination_model.compute_loss(batch, pred_term)
+            term_correct = corr
+            term_total = tot
+
+            itemized_loss = self.loss_weights[[1, 7]] * torch.stack((
+                # curr_state_loss, 
+                next_state_loss, 
+                # reward_loss, 
+                # return_loss, 
+                # c_loss, 
+                # action_loss, 
+                # subs_loss, 
+                term_loss
+            ))
         
         result = itemized_loss if return_elements else itemized_loss.sum()
         if return_accuracies:
