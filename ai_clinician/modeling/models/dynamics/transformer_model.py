@@ -261,7 +261,7 @@ class StatePredictionModel(nn.Module):
         else:    
             mu, logvar, distro = model_outputs
             
-            neg_log_likelihood = -distro.log_prob(next_state_vec) + torch.clamp(0.5 * distro.log_prob(in_state), min=-10)
+            neg_log_likelihood = -distro.log_prob(next_state_vec) + torch.abs(next_state_vec - in_state) * torch.clamp(distro.log_prob(in_state), min=-5, max=5)
             overall_loss = neg_log_likelihood + self.variance_regularizer * torch.log(F.softplus(logvar)) # ** 0.5)
             overall_loss *= timestep_weights
             
@@ -660,7 +660,7 @@ class MultitaskDynamicsModel:
         if self.num_unrolling_steps > 1:
             assert not self.boolean_mask_as_input
             
-            itemized_loss = torch.zeros(2)
+            itemized_loss = torch.zeros(2).to(self.device)
             initial_embed = None
             for step in range(self.num_unrolling_steps):
                 if initial_embed is None:
