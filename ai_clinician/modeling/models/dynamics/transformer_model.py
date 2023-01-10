@@ -251,7 +251,7 @@ class StatePredictionModel(nn.Module):
         if self.predict_delta:
             timestep_weights = self.timestep_weight_eps + next_state_vec ** 2  # Upweight timesteps with more change
         else:
-            timestep_weights = torch.clamp(self.timestep_weight_eps + next_state_vec ** 2, max=10.0) # torch.ones_like(next_state_vec).to(self.device)
+            timestep_weights = torch.ones_like(next_state_vec).to(self.device) # torch.clamp(self.timestep_weight_eps + next_state_vec ** 2, max=10.0)
 
         if self.target_transform is not None:
             next_state_vec = self.target_transform(next_state_vec)
@@ -261,7 +261,7 @@ class StatePredictionModel(nn.Module):
         else:    
             mu, logvar, distro = model_outputs
             
-            neg_log_likelihood = -distro.log_prob(next_state_vec) + torch.abs(next_state_vec - in_state) * torch.clamp(distro.log_prob(in_state), min=-5, max=5)
+            neg_log_likelihood = -distro.log_prob(next_state_vec) # + torch.abs(next_state_vec - in_state) * torch.clamp(distro.log_prob(in_state), min=-5, max=5)
             overall_loss = neg_log_likelihood + self.variance_regularizer * torch.log(F.softplus(logvar)) # ** 0.5)
             overall_loss *= timestep_weights
             
