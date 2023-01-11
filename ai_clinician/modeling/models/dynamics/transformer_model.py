@@ -761,6 +761,42 @@ class MultitaskDynamicsModel:
             result = (result, (subs_correct, subs_total), (term_correct, term_total))
         return result
     
+    def unroll_forward(self, batch=None, last_embedding=None, actions=None, eval=True):
+        """
+        Generates the next step and termination probability for one timestep
+        in the future. Either batch (a tuple of obs, dem, ac, missing, rewards, discounted_rewards, in_lens)
+        or last_embedding (a tensor of shape N x L x E where E is the embedding
+        dimension of the transformer) AND actions (tensor of shape N x L x A) 
+        is required.
+        
+        Returns a tuple (next state, termination, embedding) where next state
+        is N x L x O, termination is N x L, and embedding is N x L x E.
+        """
+        assert batch is not None or (last_embedding is not None and actions is not None)
+        
+        if eval:
+            self.eval()
+            torch.set_grad_enabled(False)
+            
+        src_mask = generate_square_subsequent_mask(self.max_seq_len).to(self.device)
+        if batch is not None:
+            obs, dem, ac, _, _, _, _ = batch
+            obs = obs.to(self.device)
+            dem = dem.to(self.device)
+            ac = ac.to(self.device)
+            _, _, final_embed = self.model(obs, dem, ac, src_mask)            
+        else:
+            final_embed = self.model.unroll_from_embedding(last_embedding, actions, src_mask)
+            
+        _, _, pred_next = self.next_state_model(final_embed)
+        val_final_input = final_embed if self.value_input is None else F.leaky_relu(self.value_input(final_embed))            
+        pred_term = torch.sigmoid(self.termination_model(val_final_input)).squeeze(-1)
+            
+        if eval:
+            torch.set_grad_enabled(True)
+            
+        return pred_next, pred_term, final_embed
+        
     def train(self):
         self.overall_model.train()
         
