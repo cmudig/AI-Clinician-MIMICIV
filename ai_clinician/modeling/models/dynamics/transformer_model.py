@@ -16,6 +16,22 @@ import torch.nn.init as weight_init
 from torch.optim import Adam
 
 class TransformerLatentSpaceModel(nn.Module):
+    """
+    Helper neural network that handles the multi-head attention (transformer)
+    component of the network.
+    
+    Inputs:
+        src: (N, L, E) - the embedded input data
+        src_mask: (L, L) - indicates which positions should be allowed to attend
+            to which other positions.
+            
+    Output: (N, L, E). The resulting embeddings are contextualized by the other
+        elements in the sequence.
+        
+    N = batch size
+    L = sequence length
+    E = embedding dimension
+    """
     def __init__(self, embed_dim, nhead, nlayers, dropout, positional_encoding=True):
         super().__init__()
         self.encoder_layers = []
@@ -58,12 +74,30 @@ class TransformerLatentSpaceModel(nn.Module):
             src = norm(transformed + src)
         final_embed = src.permute(1, 0, 2)
         return final_embed
-    
+              
 class TransformerDynamicsModel(nn.Module):
     """
     A torch module that embeds a sequence of patient states, actions, and
     demographics, then contextualizes them using multi-headed self attention
     blocks.
+    
+    Inputs:
+        state: (N, L, O)
+        demog: (N, L, D)
+        action: (N, L, A)
+        src_mask: (L, L) indicating which self-attentions should be masked
+
+    Outputs:
+        obs + demog embedding: (N, L, E)
+        contextualized obs + demog embedding: (N, L, E)
+        contextualized obs + demog + action embedding: (N, L, E)
+        
+    N = batch size
+    L = sequence length
+    O = dimension of the observation vector
+    D = dimension of the demographics vector
+    A = dimension of the action vector (usually 2)
+    E = embedding dimension
     """
 
     def __init__(self, state_dim, demog_dim, action_dim, embed_dim, nhead,
@@ -119,7 +153,7 @@ class TransformerDynamicsModel(nn.Module):
             src_mask: (L, L) indicating which self-attentions should be masked
 
         Returns:
-            state + demog embedding, state + demog + action embedding, and
+            state + demog embedding, contextualized state + demog embedding, and
             contextualized state + demog + action embedding
         """
         initial_embed = self.encode(state, demog)
@@ -140,6 +174,150 @@ class TransformerDynamicsModel(nn.Module):
         
         return self.state_action_transformer(sa_embed, src_mask)
 
+class RNNDynamicsModel(nn.Module):
+    """
+    An alternative to TransformerDynamicsModel that uses an LSTM instead of
+    a transformer architecture.
+    """
+    def __init__(self, state_dim, demog_dim, action_dim, embed_dim, num_lstm_layers=1, bidirectional=False, dropout=0.1, device='cpu'):
+        super(RNNDynamicsModel, self).__init__()
+        self.state_dim = state_dim
+        self.demog_dim = demog_dim
+        self.action_dim = action_dim
+        self.embed_dim = embed_dim
+
+        self.state_embedding = nn.Linear(state_dim, embed_dim)
+        self.demog_embedding = nn.Linear(demog_dim, embed_dim)
+        self.state_demog = nn.Linear(embed_dim * 2, embed_dim)
+        self.state_rnn = nn.LSTM(embed_dim, embed_dim, num_layers=num_lstm_layers, dropout=dropout, bidirectional=bidirectional, batch_first=True)
+
+        self.action_embedding = nn.Linear(action_dim, embed_dim)
+        self.state_action = nn.Linear(embed_dim * 2, embed_dim)
+        self.state_action_rnn = nn.LSTM(embed_dim, embed_dim, num_layers=num_lstm_layers, dropout=dropout, bidirectional=bidirectional, batch_first=True)
+
+        self.num_lstm_layers = num_lstm_layers
+        self.bidirectional = bidirectional
+                    
+        self.device = device
+
+    def encode(self, state, demog):
+        """
+        state: (N, L, S) where S is the state_dim
+        demog: (N, L, D) where D is the demog_dim
+        """
+        state_embed = F.leaky_relu(self.state_embedding(state))
+        demog_embed = F.leaky_relu(self.demog_embedding(demog))
+        combined = torch.cat((state_embed, demog_embed), 2)
+        return self.state_demog(combined)
+    
+    def forward(self, state, demog, action, src_mask):
+        """
+        Args:
+            state: (N, L, S) where S is the state_dim
+            demog: (N, L, D) where D is the demog_dim
+            action: (N, L, A) where A is the action_dim
+            src_mask: unused
+
+        Returns:
+            state + demog embedding, contextualized state + demog embedding, and
+            contextualized state + demog + action embedding
+        """
+        initial_embed = self.encode(state, demog)
+        
+        state_embed, _ = self.state_rnn(initial_embed, self.init_state(initial_embed.shape[0]))
+        
+        final_embed = self.unroll_from_embedding(state_embed, action, src_mask)
+                
+        return initial_embed, state_embed, final_embed
+    
+    def unroll_from_embedding(self, state_embed, action, src_mask):
+        """
+        Produces a state-action embedding from a state-only embedding and an action.
+        """
+        action_embed = self.action_embedding(action)
+        sa_embed = self.state_action(torch.cat((state_embed, action_embed), 2))
+        
+        final_embed, _ = self.state_action_rnn(sa_embed, self.init_state(state_embed.shape[0]))
+        return final_embed
+    
+    def init_state(self, batch_size):
+        return (torch.zeros(self.num_lstm_layers * (2 if self.bidirectional else 1), batch_size, self.embed_dim).to(self.device), 
+                torch.zeros(self.num_lstm_layers * (2 if self.bidirectional else 1), batch_size, self.embed_dim).to(self.device))
+      
+class LinearDynamicsModel(nn.Module):
+    """
+    An alternative to TransformerDynamicsModel that uses only linear layers, so
+    the embeddings are not contextualized across the sequence.
+    """
+    def __init__(self, state_dim, demog_dim, action_dim, embed_dim, num_layers=1, dropout=0.1, device='cpu'):
+        super(LinearDynamicsModel, self).__init__()
+        self.state_dim = state_dim
+        self.demog_dim = demog_dim
+        self.action_dim = action_dim
+        self.embed_dim = embed_dim
+
+        self.state_embedding = nn.Linear(state_dim, embed_dim)
+        self.demog_embedding = nn.Linear(demog_dim, embed_dim)
+        self.state_demog = nn.Linear(embed_dim * 2, embed_dim)
+        self.state_encoder = nn.ModuleList()
+        for _ in range(num_layers):
+            self.state_encoder.append(nn.Linear(embed_dim, embed_dim))
+
+        self.action_embedding = nn.Linear(action_dim, embed_dim)
+        self.state_action = nn.Linear(embed_dim * 2, embed_dim)
+        self.state_action_encoder = nn.ModuleList()
+        for _ in range(num_layers):
+            self.state_action_encoder.append(nn.Linear(embed_dim, embed_dim))
+
+        self.num_layers = num_layers
+        self.dropout = nn.Dropout(dropout)
+
+        self.device = device
+
+    def encode(self, state, demog):
+        """
+        state: (N, L, S) where S is the state_dim
+        demog: (N, L, D) where D is the demog_dim
+        """
+        state_embed = F.leaky_relu(self.state_embedding(state))
+        demog_embed = F.leaky_relu(self.demog_embedding(demog))
+        combined = torch.cat((state_embed, demog_embed), 2)
+        return self.state_demog(combined)
+    
+    def forward(self, state, demog, action, src_mask):
+        """
+        Args:
+            state: (N, L, S) where S is the state_dim
+            demog: (N, L, D) where D is the demog_dim
+            action: (N, L, A) where A is the action_dim
+            src_mask: unused
+
+        Returns:
+            state + demog embedding, contextualized state + demog embedding, and
+            contextualized state + demog + action embedding
+        """
+        initial_embed = self.dropout(F.leaky_relu(self.encode(state, demog)))
+        
+        state_embed = initial_embed
+        for layer in self.state_encoder:
+            state_embed = self.dropout(F.leaky_relu(layer(state_embed)))
+                    
+        final_embed = self.unroll_from_embedding(state_embed, action, src_mask)
+                
+        return initial_embed, state_embed, final_embed
+    
+    def unroll_from_embedding(self, state_embed, action, src_mask):
+        """
+        Produces a state-action embedding from a state-only embedding and an action.
+        """
+        action_embed = self.action_embedding(action)
+        sa_embed = self.state_action(torch.cat((state_embed, action_embed), 2))
+        
+        final_embed = sa_embed
+        for layer in self.state_action_encoder:
+            final_embed = self.dropout(F.leaky_relu(layer(final_embed)))
+        return final_embed    
+      
 
 def generate_square_subsequent_mask(sz):
     """Generates an upper-triangular matrix of -inf, with zeros on diag."""
@@ -171,8 +349,24 @@ class PositionalEncoding(nn.Module):
 
 class StatePredictionModel(nn.Module):
     """
-    A model that takes a dynamics model embedding as output and predicts an
+    A model that takes a dynamics model's embedding output and predicts an
     aleatoric uncertainty-aware next state.
+    
+    Input: embedding (N, L, E) representing the contextualized embeddings
+        for each timestep
+        
+    Output:
+        If predict_variance is True: returns a mean next state prediction 
+        (N, L, O), an estimate of the log-variance of the prediction (N, L, O),
+        and a torch Distribution object that can be used to sample from the
+        distribution defined by this mean and variance.
+        If predict_variance is False: returns the mean next state prediction
+        (N, L, O)
+        
+    N = batch size
+    L = sequence length
+    O = dimension of the observation vector
+    E = embedding dimension
     """
     
     def __init__(self, 
@@ -272,6 +466,10 @@ class StatePredictionModel(nn.Module):
         return loss_masked.sum() / loss_mask.sum()
 
 class FullyConnected2Layer(nn.Module):
+    """
+    Helper module that defines a simple 2-layer fully connected network with
+    optional dropout and batch normalization.
+    """
     def __init__(self, in_dim, latent_dim, out_dim, dropout=0.1, batch_norm=False):
         super().__init__()
         self.l1 = nn.Linear(in_dim, latent_dim)
@@ -298,6 +496,26 @@ class FullyConnected2Layer(nn.Module):
         return self.l2(out)
     
 class ValuePredictionModel(nn.Module):
+    """
+    A model that takes a dynamics model's embedding output and predicts a single
+    value for each timestep, either the reward for the current step or the
+    discounted sum of rewards till the end of the trajectory.
+    
+    Input: embedding (N, L, E) representing the contextualized embeddings
+        for each timestep
+        
+    Output:
+        If predict_variance is True: returns a mean value prediction 
+        (N, L, 1), an estimate of the log-variance of the prediction (N, L, 1),
+        and a torch Distribution object that can be used to sample from the
+        distribution defined by this mean and variance.
+        If predict_variance is False: returns the mean next state prediction
+        (N, L, 1)
+        
+    N = batch size
+    L = sequence length
+    E = embedding dimension
+    """
     def __init__(self, embed_dim, predict_rewards=False, hidden_dim=16, dropout=0.1, batch_norm=False, predict_variance=False, variance_regularizer=10.0, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
@@ -338,6 +556,19 @@ class ValuePredictionModel(nn.Module):
         return loss_masked.sum() / loss_mask.sum()
     
 class TerminationPredictionModel(nn.Module):
+    """
+    A model that takes a dynamics model's embedding output and predicts whether
+    the trajectory will end at each timestep.
+    
+    Input: embedding (N, L, E) representing the contextualized embeddings
+        for each timestep
+        
+    Output: termination logit probabilities (N, L, 1)
+        
+    N = batch size
+    L = sequence length
+    E = embedding dimension
+    """
     def __init__(self, embed_dim, dropout=0.1, hidden_dim=16, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
@@ -375,7 +606,18 @@ class TerminationPredictionModel(nn.Module):
 class ActionPredictionModel(nn.Module):
     """
     A model that predicts the action that gave rise to the transition between
-    pairs of states.
+    pairs of states. This can be used as an auxiliary task to help the transformer
+    learn a more robust embedding space.
+    
+    Input: embedding (N', L, 2 * E) representing the contextualized embeddings
+        for each timestep
+        
+    Output: mean action prediction (N, L, A)
+        
+    N' = batch size (use create_batch to create a batch of the appropriate size)
+    L = sequence length
+    E = embedding dimension
+    A = action dimension
     """
     def __init__(self, embed_dim, action_dim, discrete=False, num_bins_per_action=None, dropout=0.1, device='cpu', training_fraction=0.1):
         super().__init__()
@@ -410,6 +652,7 @@ class ActionPredictionModel(nn.Module):
                                        replace=False)
         for i in idxs_to_use:
             L = seq_lens[i].item()
+            if L == 0: continue
             transitions.append(torch.cat((embeddings[i,:L - 1,:], embeddings[i,1:L,:]), 1))
             returned_actions.append(actions[i,:L - 1,:])
         return torch.cat(transitions, 0), torch.cat(returned_actions, 0)
@@ -467,6 +710,7 @@ class SubsequentBinaryPredictionModel(nn.Module):
                                        replace=False)
         for i in idxs_to_use:
             L = seq_lens[i].item()
+            if L == 0: continue
             final_flat.append(final_embeddings[i,:L - 1,:])
             initial_flat.append(initial_embeddings[i,1:L,:])
         
@@ -508,6 +752,7 @@ class MultitaskDynamicsModel:
                  embed_size=512,
                  nlayers=3,
                  nhead=4,
+                 dynamics_architecture='transformer',
                  positional_encoding=True,
                  dropout=0.0,
                  value_dropout=0.1,
@@ -524,19 +769,58 @@ class MultitaskDynamicsModel:
                  input_noise_scale=None,
                  num_unrolling_steps=1,
                  device='cpu',
-                 replacement_values=None):
+                 replacement_values=None,
+                 loss_weights=None):
+        """
+        dynamics_architecture: Can be "transformer" (TransformerDynamicsModel),
+            "rnn" (RNNDynamicsModel), or "linear" (LinearDynamicsModel)
+        loss_weights: Can be a tensor of 8 values corresponding to the following
+            losses (where MSE is used if predict_variance is False, and log
+            likelihood is used if true):
+            1. Current state prediction loss (MSE or log likelihood)
+            2. Next state prediction loss (MSE or log likelihood)
+            3. Timestep reward loss (MSE or log likelihood)
+            4. Discounted sum of rewards loss (MSE or log likelihood)
+            5. Consistency loss (MSE between initial and final embeddings)
+            6. Action prediction loss (MSE)
+            7. Is subsequent action loss (BCE)
+            8. Termination prediction loss (BCE)
+            If a weight is zero, that loss will not be computed.
+        """
         
         super().__init__()
-        self.model = TransformerDynamicsModel(
-            obs_size * 2 if boolean_mask_as_input else obs_size, 
-            dem_size,
-            2, 
-            embed_size, 
-            nhead, 
-            nlayers, 
-            dropout, 
-            device=device,
-            positional_encoding=positional_encoding).to(device)
+        self.dynamics_architecture = dynamics_architecture
+        if dynamics_architecture == "transformer":
+            self.model = TransformerDynamicsModel(
+                obs_size * 2 if boolean_mask_as_input else obs_size, 
+                dem_size,
+                2, 
+                embed_size, 
+                nhead, 
+                nlayers, 
+                dropout, 
+                device=device,
+                positional_encoding=positional_encoding).to(device)
+        elif dynamics_architecture == "rnn":
+            self.model = RNNDynamicsModel(
+                obs_size * 2 if boolean_mask_as_input else obs_size, 
+                dem_size,
+                2, 
+                embed_size,
+                num_lstm_layers=nlayers,
+                dropout=dropout,
+                device=device
+            ).to(device)
+        elif dynamics_architecture == "linear":
+            self.model = LinearDynamicsModel(
+                obs_size * 2 if boolean_mask_as_input else obs_size, 
+                dem_size,
+                2, 
+                embed_size,
+                num_layers=nlayers,
+                dropout=dropout,
+                device=device
+            ).to(device)
         self.boolean_mask_as_input = boolean_mask_as_input
 
         self.current_state_model = StatePredictionModel(
@@ -619,7 +903,8 @@ class MultitaskDynamicsModel:
         self.replacement_values = replacement_values
         self.input_noise_scale = input_noise_scale
         
-        self.loss_weights = (torch.FloatTensor([1, 1, 0.2, 0.05, 1, 1, 1, 1]) * 0.1).to(device)
+        lw = loss_weights if loss_weights is not None else torch.FloatTensor([1, 1, 0.2, 0.05, 1, 1, 1, 1])
+        self.loss_weights = (lw / lw.sum()).to(device)
         
         self.consistency_offset = 1
         self.consistency_subloss = nn.MSELoss(reduction='none')
@@ -633,6 +918,24 @@ class MultitaskDynamicsModel:
                                      final_embed.shape[2]).to(self.device)), 1)
         
     def compute_loss(self, batch, corrupt_inputs=True, return_elements=False, return_accuracies=False):
+        """
+        Runs the dynamics model and returns the weighted total loss over all
+        tasks.
+        
+        Args:
+            batch: A tuple from a DataLoader wrapped around a DynamicsDataset, 
+                including (observations, demographics, actions, missingness 
+                flags, rewards, discounted rewards, sequence lengths).
+            corrupt_inputs: If True, add Gaussian noise to the inputs scaled
+                by the input_noise_scale property.
+            return_elements: If True, return the itemized, weighted length-8 
+                vector loss instead of the sum.
+            return_accuracies: If True, return a tuple (loss, subs_accuracy,
+                term_accuracy) where subs_accuracy is a tuple (correct, total)
+                indicating the accuracy of the subsequent state prediction task,
+                and term_accuracy is a similar tuple indicating the accuracy of
+                the termination prediction task.
+        """
         obs, dem, ac, missing, rewards, discounted_rewards, in_lens = batch
         
         src_mask = generate_square_subsequent_mask(self.max_seq_len).to(self.device) # torch.ones(seq_len, seq_len).to(device)
@@ -658,15 +961,16 @@ class MultitaskDynamicsModel:
                 should_mask = should_mask.float()
 
         if self.num_unrolling_steps > 1:
+            # Run transformer multiple times and use the previous outputs as the next inputs.
             assert not self.boolean_mask_as_input
             
             itemized_loss = torch.zeros(2).to(self.device)
             initial_embed = None
             for step in range(self.num_unrolling_steps):
                 if initial_embed is None:
-                    _, _, final_embed = self.model(masked_obs, dem, ac, src_mask)
+                    _, initial_embed, final_embed = self.model(masked_obs, dem, ac, src_mask)
                 else:
-                    final_embed = self.model.unroll_from_embedding(initial_embed[:,:-1,:], ac[:,step:,:], src_mask)
+                    final_embed = self.model.unroll_from_embedding(initial_embed, ac[:,step:,:], src_mask)
                 unroll_batch = (obs[:,step:,:], 
                                 dem[:,step:,:], 
                                 ac[:,step:,:], 
@@ -675,92 +979,106 @@ class MultitaskDynamicsModel:
                                 discounted_rewards[:,step:], 
                                 in_lens - step)
                 
-                # 2. Next-state prediction model
-                pred_next = self.next_state_model(final_embed)
-                next_state_loss = self.next_state_model.compute_loss(unroll_batch, pred_next)
+                itemized_loss, subs_acc, term_acc = self._compute_losses(unroll_batch, initial_embed, final_embed)
                 
-                val_final_input = final_embed if self.value_input is None else F.leaky_relu(self.value_input(final_embed))
-                subs_correct = 0
-                subs_total = 1
-                
-                # 8. Termination model
-                pred_term = self.termination_model(val_final_input)
-                term_loss, corr, tot = self.termination_model.compute_loss(unroll_batch, pred_term)
-                term_correct = corr
-                term_total = tot
-
-                itemized_loss += self.loss_weights[[1, 7]] * torch.stack((
-                    next_state_loss, 
-                    term_loss
-                ))
-                
-                initial_embed = final_embed
+                # Shorten the input by one off the end, so that the model doesn't
+                # try to evaluate on steps that it doesn't have knowledge about
+                initial_embed = final_embed[:,:-1,:]
         else:
-            # Run transformer
+            # Just run transformer once
             embed_in = torch.cat((masked_obs, should_mask), 2) if self.boolean_mask_as_input else masked_obs
             _, initial_embed, final_embed = self.model(embed_in, dem, ac, src_mask)
             
-            # # 1. Masked prediction model
-            # pred_curr = self.current_state_model(initial_embed)
-            # curr_state_loss = self.current_state_model.compute_loss(batch, pred_curr)
-            
-            # 2. Next-state prediction model
+            itemized_loss, subs_acc, term_acc = self._compute_losses(batch, initial_embed, final_embed)
+        
+        result = itemized_loss if return_elements else itemized_loss.sum()
+        if return_accuracies:
+            result = (result, subs_acc, term_acc)
+        return result
+    
+    def _compute_losses(self, batch, initial_embed, final_embed):
+        # 1. Masked prediction model
+        if abs(self.loss_weights[0].item()) > 0.0001:
+            pred_curr = self.current_state_model(initial_embed)
+            curr_state_loss = self.current_state_model.compute_loss(batch, pred_curr)
+        else:
+            curr_state_loss = torch.tensor(0.0).to(self.device)
+        
+        # 2. Next-state prediction model
+        if abs(self.loss_weights[1].item()) > 0.0001:
             pred_next = self.next_state_model(final_embed)
             next_state_loss = self.next_state_model.compute_loss(batch, pred_next)
-            
-            val_final_input = final_embed if self.value_input is None else F.leaky_relu(self.value_input(final_embed))
-            # val_initial_input = initial_embed if self.value_input is None else F.leaky_relu(self.value_input(initial_embed))
-            
-            # 3. Reward model
-            # pred_reward = self.reward_model(val_final_input)
-            # reward_loss = self.reward_model.compute_loss(batch, pred_reward)
-            
-            # # 4. Return model
-            # pred_return = self.return_model(val_final_input)
-            # return_loss = self.return_model.compute_loss(batch, pred_return)
+        else:
+            next_state_loss = torch.tensor(0.0).to(self.device)
+        
+        val_final_input = final_embed if self.value_input is None else F.leaky_relu(self.value_input(final_embed))
+        val_initial_input = initial_embed if self.value_input is None else F.leaky_relu(self.value_input(initial_embed))
+        
+        # 3. Reward model
+        if abs(self.loss_weights[2].item()) > 0.0001:
+            pred_reward = self.reward_model(val_final_input)
+            reward_loss = self.reward_model.compute_loss(batch, pred_reward)
+        else:
+            reward_loss = torch.tensor(0.0).to(self.device)
 
-            # 5. Consistency loss
-            # c_loss = self._consistency_loss(final_embed, initial_embed)
-            # loss_mask = torch.arange(c_loss.shape[1])[None, :, None].to(self.device) < in_lens[:, None, None]
-            # c_loss_masked = c_loss.where(loss_mask, torch.tensor(0.0).to(self.device))
-            # c_loss = c_loss_masked.sum() / loss_mask.sum()
-            
-            # 6. Action prediction loss
-            # action_batch = self.action_model.create_batch(initial_embed, in_lens, ac)
-            # pred_action = self.action_model(action_batch[0])
-            # action_loss = self.action_model.compute_loss(action_batch, pred_action)
-            
-            # # 7. Is subsequent action loss
-            # subsequent_batch = self.subsequent_model.create_batch(val_final_input, val_initial_input, in_lens)
-            # pred_subs = self.subsequent_model(subsequent_batch[0], subsequent_batch[1])
-            # subs_loss = self.subsequent_model.compute_loss(subsequent_batch, pred_subs)
-            # subs_correct = (torch.round(torch.sigmoid(pred_subs)) == subsequent_batch[2]).sum().item()
-            # subs_total = subsequent_batch[2].shape[0]
+        # 4. Return model
+        if abs(self.loss_weights[3].item()) > 0.0001:
+            pred_return = self.return_model(val_final_input)
+            return_loss = self.return_model.compute_loss(batch, pred_return)
+        else:
+            return_loss = torch.tensor(0.0).to(self.device)
+
+        # 5. Consistency loss
+        if abs(self.loss_weights[4].item()) > 0.0001:
+            c_loss = self._consistency_loss(final_embed, initial_embed)
+            loss_mask = torch.arange(c_loss.shape[1])[None, :, None].to(self.device) < batch[-1][:, None, None]
+            c_loss_masked = c_loss.where(loss_mask, torch.tensor(0.0).to(self.device))
+            c_loss = c_loss_masked.sum() / loss_mask.sum()
+        else:
+            c_loss = torch.tensor(0.0).to(self.device)
+        
+        # 6. Action prediction loss
+        if abs(self.loss_weights[5].item()) > 0.0001:
+            action_batch = self.action_model.create_batch(initial_embed, batch[-1], batch[2])
+            pred_action = self.action_model(action_batch[0])
+            action_loss = self.action_model.compute_loss(action_batch, pred_action)
+        else:
+            action_loss = torch.tensor(0.0).to(self.device)
+        
+        # 7. Is subsequent action loss
+        if abs(self.loss_weights[6].item()) > 0.0001:
+            subsequent_batch = self.subsequent_model.create_batch(val_final_input, val_initial_input, batch[-1])
+            pred_subs = self.subsequent_model(subsequent_batch[0], subsequent_batch[1])
+            subs_loss = self.subsequent_model.compute_loss(subsequent_batch, pred_subs)
+            subs_correct = (torch.round(torch.sigmoid(pred_subs)) == subsequent_batch[2]).sum().item()
+            subs_total = subsequent_batch[2].shape[0]
+        else:
+            subs_loss = torch.tensor(0.0).to(self.device)
             subs_correct = 0
             subs_total = 1
-            
-            # 8. Termination model
+        
+        # 8. Termination model
+        if abs(self.loss_weights[7].item()) > 0.0001:
             pred_term = self.termination_model(val_final_input)
             term_loss, corr, tot = self.termination_model.compute_loss(batch, pred_term)
             term_correct = corr
             term_total = tot
-
-            itemized_loss = self.loss_weights[[1, 7]] * torch.stack((
-                # curr_state_loss, 
-                next_state_loss, 
-                # reward_loss, 
-                # return_loss, 
-                # c_loss, 
-                # action_loss, 
-                # subs_loss, 
-                term_loss
-            ))
+        else:
+            term_correct = 0
+            term_total = 1
+            
+        itemized_loss = self.loss_weights * torch.stack((
+            curr_state_loss, 
+            next_state_loss, 
+            reward_loss, 
+            return_loss, 
+            c_loss, 
+            action_loss, 
+            subs_loss, 
+            term_loss
+        ))
+        return itemized_loss, (subs_correct, subs_total), (term_correct, term_total)
         
-        result = itemized_loss if return_elements else itemized_loss.sum()
-        if return_accuracies:
-            result = (result, (subs_correct, subs_total), (term_correct, term_total))
-        return result
-    
     def unroll_forward(self, batch=None, last_embedding=None, actions=None, eval=True):
         """
         Generates the next step and termination probability for one timestep

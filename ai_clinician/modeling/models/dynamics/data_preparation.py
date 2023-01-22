@@ -53,16 +53,18 @@ ALL_FEATURE_COLUMNS = AS_IS_COLUMNS + NORM_COLUMNS + LOG_NORM_COLUMNS
 DEMOG_NORM_COLUMNS = [C_AGE, C_ELIXHAUSER, C_HEIGHT]
 COMORBIDITIES = [x for x in RAW_DATA_COLUMNS["comorbidities"] if x not in (C_SUBJECT_ID, C_HADM_ID, C_ICUSTAYID)]
 DEMOGRAPHICS_AS_IS_COLUMNS = [C_GENDER, C_RE_ADMISSION] + COMORBIDITIES
+ALL_DEMOG_COLUMNS = DEMOGRAPHICS_AS_IS_COLUMNS + DEMOG_NORM_COLUMNS
 
 class DataNormalization:
     """
     Handles all normalization of MIMIC and eICU state and demographics data.
     """
     
-    def __init__(self, training_data, scaler=None, as_is_columns=AS_IS_COLUMNS, norm_columns=NORM_COLUMNS, log_norm_columns=LOG_NORM_COLUMNS):
+    def __init__(self, training_data, scaler=None, as_is_columns=AS_IS_COLUMNS, norm_columns=NORM_COLUMNS, log_norm_columns=LOG_NORM_COLUMNS, clamp_magnitude=None):
         self.as_is_columns = as_is_columns
         self.norm_columns = norm_columns
         self.log_norm_columns = log_norm_columns
+        self.clamp_magnitude = clamp_magnitude
         if scaler is not None:
             self.scaler = scaler
         else:
@@ -77,6 +79,8 @@ class DataNormalization:
         # MIMICzs[pd.isna(MIMICzs)] = 0
         # MIMICzs[C_MAX_DOSE_VASO] = np.log(MIMICzs[C_MAX_DOSE_VASO] + 6)   # MAX DOSE NORAD 
         # MIMICzs[C_INPUT_STEP] = 2 * MIMICzs[C_INPUT_STEP]   # increase weight of this variable
+        if self.clamp_magnitude is not None:
+            MIMICzs = np.where(np.abs(MIMICzs) >= self.clamp_magnitude, np.nan, MIMICzs)
         return MIMICzs
 
     def _clip_and_log_transform(self, data, log_gamma=0.1):
@@ -105,7 +109,22 @@ class DataNormalization:
 REWARD_VAL = 5
 
 class DynamicsDataNormalizer:
-    def __init__(self, obs, demog, actions, _loaded_data=None):
+    """
+    Class that manages scaling back and forth between the raw data and the
+    representation required for dynamics models (normal/log scaling and action
+    scaling).
+    """
+    def __init__(self, obs, demog, actions, _loaded_data=None, obs_clamp_magnitude=None):
+        """
+        obs: A pandas dataframe containing all the columns defined in
+            ALL_FEATURE_COLUMNS.
+        demog: A pandas dataframe containing all the columns defined in
+            ALL_DEMOG_COLUMNS.
+        actions: A numpy array with 2 columns, where the first column indicates
+            the normalized fluid input in the next step from each row (fluid
+            volume per kg of body weight), and the second column indicates the
+            vasopressor dosage in the next step (ug/kg/min of norepinephrine).
+        """
         super().__init__()
         if _loaded_data is not None:
             self.obs_norm = DataNormalization(None, scaler=_loaded_data['obs_scaler'])
@@ -113,11 +132,12 @@ class DynamicsDataNormalizer:
                                                 scaler=_loaded_data['demog_scaler'], 
                                                 as_is_columns=DEMOGRAPHICS_AS_IS_COLUMNS,
                                                 norm_columns=DEMOG_NORM_COLUMNS,
-                                                log_norm_columns=[])
+                                                log_norm_columns=[],
+                                                clamp_magnitude=_loaded_data['obs_clamp_magnitude'])
             self.mean_action = _loaded_data['mean_action']
             self.std_action = _loaded_data['std_action']
         else:
-            self.obs_norm = DataNormalization(obs)
+            self.obs_norm = DataNormalization(obs, clamp_magnitude=obs_clamp_magnitude)
             self.demog_norm = DataNormalization(demog, 
                                             as_is_columns=DEMOGRAPHICS_AS_IS_COLUMNS,
                                             norm_columns=DEMOG_NORM_COLUMNS,
@@ -125,17 +145,38 @@ class DynamicsDataNormalizer:
             self.transform_action(actions, fit=True)
             
     def transform_state(self, obs, demog):
+        """
+        Converts pandas dataframes of observations and demographics (of the
+        same number of rows and containing the columns in ALL_FEATURE_COLUMNS
+        and ALL_DEMOG_COLUMNS, respectively) into matrices of normalized feature
+        data.
+        """
         obs_train = self.obs_norm.transform(obs).values
         demog_train = self.demog_norm.transform(demog).values
         return obs_train, demog_train
     
     def inverse_transform_obs(self, obs):
+        """
+        Converts a normalized matrix of observation data to a dataframe containing
+        the observation columns (ALL_FEATURE_COLUMNS).
+        """
         return self.obs_norm.inverse_transform(obs)
     
     def inverse_transform_dem(self, dem):
+        """
+        Converts a normalized matrix of demographics data to a dataframe containing
+        the demographics columns (ALL_FEATURE_COLUMNS).
+        """
         return self.demog_norm.inverse_transform(dem)
     
     def transform_action(self, actions, fit=False):
+        """
+        Converts a numpy array containing 2 columns (the fluid input per kg of
+        body weight and the vasopressor dosage in ug/kg/min norepi) to an identically-
+        shaped array containing log-transformed and z-scaled actions. The rows
+        corresponding to the end of each trajectory, which should have nan values,
+        will be converted to zero.
+        """
         actions_train = np.log(1 + actions)
 
         if fit:
@@ -148,6 +189,12 @@ class DynamicsDataNormalizer:
         return norm_actions
     
     def inverse_transform_action(self, norm_actions):
+        """
+        Converts a numpy array containing the log-transformed and z-scaled actions
+        to an array of raw fluid dosage (per kg) values and vasopressors. The
+        values for the rows corresponding to the end of each trajectory are not
+        well-defined, since they would have been nan in the raw data.
+        """
         reverse_z_transform = norm_actions * self.std_action + self.mean_action
         reverse_log = np.exp(reverse_z_transform) - 1
         return reverse_log
@@ -158,6 +205,7 @@ class DynamicsDataNormalizer:
                 'type': 'DynamicsDataNormalizer',
                 'obs_scaler': self.obs_norm.scaler,
                 'demog_scaler': self.demog_norm.scaler,
+                'obs_clamp_magnitude': self.obs_norm.clamp_magnitude,
                 'mean_action': self.mean_action,
                 'std_action': self.std_action
             }, file)
@@ -204,7 +252,7 @@ def pad_collate(batch):
     padded_arrays = [pad_sequence(xx, batch_first=True, padding_value=0) for xx in arrays_to_pad]
     return (*padded_arrays, torch.LongTensor(x_lens))
 
-def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, val_size=0.15, imputed_data=None):
+def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, val_size=0.15, imputed_data=None, obs_clamp_magnitude=None):
     """
     Args:
         dataset: a dataframe containing all the state and most of the demographics
@@ -218,6 +266,21 @@ def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, 
             val split (if train_test_split is None).
         imputed_data: If not None, a tuple of dataframes containing a (train, val, and test)
             copy of the observation dataset matching the existing train_test_split_ids.
+        obs_clamp_magnitude: If not None, a value such that any normalized
+            observation value whos absolute value is greater than this value
+            should be converted to NaN.
+            
+    Returns:
+        * dataset - the filtered and transformed dataframe, containing the
+            norm_input_step and norm_output_step (scaled by body weight)
+        * cleaned_demog - the demographics dataframe for all patients
+        * train_dataset - a DynamicsDataset object for training data
+        * val_dataset - a DynamicsDataset object for validation data
+        * test_dataset - a DynamicsDataset object for test data
+        * train_test_split_ids - a tuple of (train, val, test) arrays containing
+            the ICU stay IDs used in each split
+        * normer - a DynamicsDataNormalizer object that can be used to convert
+            back and forth between raw data features and normalized features
     """
     # Make miscellaneous adjustments, remove patients with no recorded weight and who have only one timestep
     print("Cleaning dataset")
@@ -288,7 +351,7 @@ def prepare_dataset(dataset, comorb, train_test_split_ids=None, test_size=0.15, 
     test_actions = raw_actions[dataset[C_ICUSTAYID].isin(test_ids)].values
         
     print("Fitting normalization parameters")
-    normer = DynamicsDataNormalizer(train_dataset, train_demog, train_actions)
+    normer = DynamicsDataNormalizer(train_dataset, train_demog, train_actions, obs_clamp_magnitude=obs_clamp_magnitude)
 
     obs_train, demog_train = normer.transform_state(train_dataset, train_demog)
     replacement_values = np.nanmedian(obs_train, axis=0)
