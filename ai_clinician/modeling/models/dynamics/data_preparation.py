@@ -80,7 +80,7 @@ class DataNormalization:
         # MIMICzs[C_MAX_DOSE_VASO] = np.log(MIMICzs[C_MAX_DOSE_VASO] + 6)   # MAX DOSE NORAD 
         # MIMICzs[C_INPUT_STEP] = 2 * MIMICzs[C_INPUT_STEP]   # increase weight of this variable
         if self.clamp_magnitude is not None:
-            MIMICzs = np.where(np.abs(MIMICzs) >= self.clamp_magnitude, np.nan, MIMICzs)
+            MIMICzs = MIMICzs.where(np.abs(MIMICzs) < self.clamp_magnitude, pd.NA)
         return MIMICzs
 
     def _clip_and_log_transform(self, data, log_gamma=0.1):
