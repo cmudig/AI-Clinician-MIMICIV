@@ -755,6 +755,7 @@ class MultitaskDynamicsModel:
                  dynamics_architecture='transformer',
                  positional_encoding=True,
                  dropout=0.0,
+                 num_decoder_layers=3,
                  value_dropout=0.1,
                  value_input_size=512,
                  action_training_fraction=0.2,
@@ -830,7 +831,7 @@ class MultitaskDynamicsModel:
             predict_variance=predict_variance,
             variance_regularizer=variance_regularizer,
             num_steps=0, 
-            num_layers=3,
+            num_layers=num_decoder_layers,
             device=device).to(device)
         self.next_state_model = StatePredictionModel(
             obs_size, 
@@ -839,7 +840,7 @@ class MultitaskDynamicsModel:
             predict_variance=predict_variance,
             variance_regularizer=variance_regularizer,
             num_steps=1, 
-            num_layers=3,
+            num_layers=num_decoder_layers,
             device=device).to(device)
         self.value_input_size = value_input_size
         if self.value_input_size < embed_size:
