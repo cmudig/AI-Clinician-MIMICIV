@@ -720,10 +720,19 @@ class SubsequentBinaryPredictionModel(nn.Module):
         right_side = np.arange(final_flat.shape[0])
 
         while (left_side == right_side).mean() > 1 - self.positive_label_fraction:
-            random_pair = np.random.choice(len(left_side), size=2, replace=False)
+            # Randomly flip indexes on the left and right, but use a normal distribution
+            # so that more of the flips will be between states that are part of the
+            # same trajectory. This should encourage the model to learn the difference
+            # between different states for the same patient
+            random_pair = [np.random.choice(len(left_side))] # np.random.choice(len(left_side), size=2, replace=False)
+            offset = np.random.normal()
+            random_pair.append(int(np.clip(random_pair[0] - max(1, abs(np.round(offset))) * np.sign(offset), 0, len(left_side) - 1)))
             left_side[random_pair] = left_side[np.flip(random_pair)]
-            random_pair = np.random.choice(len(right_side), size=2, replace=False)
+            random_pair = [np.random.choice(len(right_side))] # np.random.choice(len(right_side), size=2, replace=False)
+            offset = np.random.normal()
+            random_pair.append(int(np.clip(random_pair[0] - max(1, abs(np.round(offset))) * np.sign(offset), 0, len(right_side) - 1)))
             right_side[random_pair] = right_side[np.flip(random_pair)]
+
             
         return final_flat[left_side], initial_flat[right_side], torch.FloatTensor(left_side == right_side).unsqueeze(1).to(self.device)
         
