@@ -974,7 +974,7 @@ class MultitaskDynamicsModel:
             # Run transformer multiple times and use the previous outputs as the next inputs.
             assert not self.boolean_mask_as_input
             
-            itemized_loss = torch.zeros(2).to(self.device)
+            itemized_loss = torch.zeros_like(self.loss_weights).to(self.device)
             initial_embed = None
             for step in range(self.num_unrolling_steps):
                 if initial_embed is None:
@@ -989,7 +989,8 @@ class MultitaskDynamicsModel:
                                 discounted_rewards[:,step:], 
                                 in_lens - step)
                 
-                itemized_loss, subs_acc, term_acc = self._compute_losses(unroll_batch, initial_embed, final_embed)
+                step_loss, subs_acc, term_acc = self._compute_losses(unroll_batch, initial_embed, final_embed)
+                itemized_loss += step_loss / len(self.num_unrolling_steps)
                 
                 # Shorten the input by one off the end, so that the model doesn't
                 # try to evaluate on steps that it doesn't have knowledge about
