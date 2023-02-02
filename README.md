@@ -8,7 +8,7 @@ The pipeline is split into three steps: data extraction, preprocessing, and mode
 
 ### Prerequisites
 
-**Package Requirements.** Create a conda or venv environment and activate it, if desired. Then install the package and its dependencies:
+**Package Requirements.** Create a conda or venv environment and activate it, if desired. **Python 3.6 - 3.8 is recommended for PyTorch 1.6.0 compatibility.** Then install the package and its dependencies:
 
 ```
 pip install -e .

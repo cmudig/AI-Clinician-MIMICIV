@@ -8,7 +8,7 @@ setup(name=pkg_name,
       install_requires=[
           'numpy==1.24.0',
           'pandas>=1.5.0',
-          'sklearn>=0.0',
+          'scikit-learn>=1.2.0',
           'scipy>=1.4.1',
           'tqdm>=4.61.2',
           'matplotlib>=3.3.4',
