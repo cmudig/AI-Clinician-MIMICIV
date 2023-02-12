@@ -30,25 +30,39 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from torch.utils.data import TensorDataset, DataLoader
 
 # Simple full-connected supervised network for Behavior Cloning of batch data
 class FC_BC(nn.Module):
-    def __init__(self, state_dim=33, num_actions=25, num_nodes=64):
+    def __init__(self, state_dim, action_dim, num_nodes=64):
         super(FC_BC, self).__init__()
         self.l1 = nn.Linear(state_dim, num_nodes)
         self.bn1 = nn.BatchNorm1d(num_nodes)
         self.l2 = nn.Linear(num_nodes, num_nodes)
         self.bn2 = nn.BatchNorm1d(num_nodes)
-        self.l3 = nn.Linear(num_nodes, num_actions)
-
+        self.l3 = nn.Linear(num_nodes, num_nodes)
+        self.bn3 = nn.BatchNorm1d(num_nodes)
+        self.l4 = nn.Linear(num_nodes, action_dim)
+        self.init_weights()
+        
+    def init_weights(self):
+        self.l1.bias.data.zero_()
+        torch.nn.init.xavier_normal_(self.l1.weight.data)
+        self.l2.bias.data.zero_()
+        torch.nn.init.xavier_normal_(self.l2.weight.data)
+        self.l3.bias.data.zero_()
+        torch.nn.init.xavier_normal_(self.l3.weight.data)
+        self.l4.bias.data.zero_()
+        torch.nn.init.xavier_normal_(self.l4.weight.data, gain=2.0)
+    
     def forward(self, state):
-        out = F.relu(self.l1(state))
+        out = F.leaky_relu(self.l1(state))
         out = self.bn1(out)
-        out = F.relu(self.l2(out))
+        out = F.leaky_relu(self.l2(out))
         out = self.bn2(out)
-        return self.l3(out)
-
+        out = F.leaky_relu(self.l3(out))
+        out = self.bn3(out)
+        return self.l4(out)
 
 # Simple fully-connected Q-network for the policy
 class FC_Q(nn.Module):
@@ -120,10 +134,13 @@ class BehaviorCloning(object):
         '''Sample batches of data from training dataloader, predict actions using the network,
         Update the parameters of the network using CrossEntropyLoss.'''
 
-        losses = []
+        self.model.train()
+        total_loss = 0.0
+        num_batches = 0
 
         # Loop through the training data
-        for state, action in tqdm.tqdm(train_dataloader):
+        bar = tqdm.tqdm(train_dataloader, ncols=80, miniters=100)
+        for state, action in bar:
             state = state.to(self.device)
             action = action.to(self.device)
 
@@ -131,23 +148,61 @@ class BehaviorCloning(object):
             pred_actions = self.model(state)
 
             # Compute loss
-            try:
-                loss = self.loss_func(pred_actions, action.flatten())
-            except:
-                print("LOL ERRORS")
+            loss = self.loss_func(pred_actions, action.flatten())
 
             # Optimize the network
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
-            losses.append(loss.item())
+            total_loss += loss.item()
+            num_batches += 1
+            if num_batches % 100 == 0:
+                bar.set_description(f"train loss: {total_loss / num_batches:.6f}")
 
         self.iterations += 1
 
-        return np.mean(losses)
+        return total_loss / num_batches
 
+    def evaluate_model(self, val_dataloader):
+        self.model.eval()
+        with torch.no_grad():
+            total_loss = 0.0
+            correct_count = 0
+            total_count = 0
+            bar = tqdm.tqdm(enumerate(val_dataloader), ncols=80, miniters=100)
+            for i, (state, action) in bar:
+                state = state.to(self.device)
+                action = action.to(self.device)
 
+                # Predict the action with the network
+                pred_actions = self.model(state)
+
+                # Compute loss
+                loss = self.loss_func(pred_actions, action)
+                total_loss += loss.item()
+                correct_count += (pred_actions.argmax(1) == action).sum().item()
+                total_count += state.shape[0]
+                if i % 100 == 0:
+                    bar.set_description(f"val loss: {total_loss / (i + 1):.6f} Acc: {correct_count / total_count:.4f}")
+        return total_loss / i, correct_count / total_count
+
+    def predict(self, states):
+        ds = TensorDataset(states)
+        loader = DataLoader(ds, batch_size=32, shuffle=False)
+        self.model.eval()
+        actions = []
+        with torch.no_grad():
+            bar = tqdm.tqdm(enumerate(loader), ncols=80, total=len(loader), miniters=100)
+            for i, (state,) in bar:
+                state = state.to(self.device)
+
+                # Predict the action with the network
+                pred_actions = self.model(state) # / output_scaling_factor
+                actions.append(pred_actions.cpu().numpy())
+                
+        return np.concatenate(actions)  
+    
 class DiscreteBCQ(object):
     def __init__(
         self, 
@@ -210,6 +265,8 @@ class DiscreteBCQ(object):
     #         return np.random.randint(self.num_actions)
 
     def train(self, replay_buffer):
+        self.Q.train()
+        
         # Sample replay buffer
         state, action, next_state, reward, not_done = replay_buffer.sample()
 
@@ -257,6 +314,29 @@ class DiscreteBCQ(object):
         if self.iterations % self.target_update_frequency == 0:
             self.Q_target.load_state_dict(self.Q.state_dict())
 
+    def compute_constrained_Q(self, s):
+        q, imt, i = self.Q(s)
+        imt = imt.exp()
+        imt = (imt/imt.max(1, keepdim=True)[0] > self.threshold).float()
+        # Use large negative number to mask actions from argmax
+        return (imt * q + (1. - imt) * -1e8)
+        
+    def predict(self, states):
+        ds = TensorDataset(states)
+        loader = DataLoader(ds, batch_size=32, shuffle=False)
+        self.Q.eval()
+        actions = []
+        with torch.no_grad():
+            bar = tqdm.tqdm(enumerate(loader), ncols=80, total=len(loader), miniters=100)
+            for i, (state,) in bar:
+                state = state.to(self.device)
+
+                # Predict the action with the network
+                pred_actions = self.compute_constrained_Q(state) # / output_scaling_factor
+                actions.append(pred_actions.cpu().numpy())
+                
+        return np.concatenate(actions)  
+    
 
 def train_dBCQ(replay_buffer, num_actions, state_dim, device, parameters, behav_pol, pol_eval_dataloader, is_demog):
     """
