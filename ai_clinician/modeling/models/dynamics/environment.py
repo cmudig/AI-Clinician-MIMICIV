@@ -118,7 +118,7 @@ class SepsisDynamicsEnvironment:
         return pred_next_mean, pred_next_lower, pred_next_upper, pred_sampled, pred_reward, terminated_flags
     
     
-def evaluate_dynamics_model_real_trajectories(eval_dataset, normer, env, num_initial_steps=24, num_to_simulate=12, batch_size=32, sample=None):
+def evaluate_dynamics_model_real_trajectories(eval_dataset, normer, env, num_initial_steps=24, num_to_simulate=12, batch_size=32, sample=None, sample_outputs=False):
     """
     Runs the dynamics model on a dataset of real trajectories, using the real
     set of actions performed by the clinicians. This can be used to evaluate
@@ -141,6 +141,8 @@ def evaluate_dynamics_model_real_trajectories(eval_dataset, normer, env, num_ini
         sample: If not None, a number indicating how many trajectories to
             sample from the dataset to evaluate. Otherwise, evaluates all
             trajectories with sufficient length.
+        sample_outputs: If True, sample from the next state distribution,
+            otherwise use the next state mean.
             
     Returns:
         A dataframe of new trajectory observations, containing the icustayid
@@ -208,9 +210,10 @@ def evaluate_dynamics_model_real_trajectories(eval_dataset, normer, env, num_ini
         # Iterate over timesteps and generate the next states
         while terminated.sum() < len(terminated) and len(state_history) < max_traj_length:
             last_terminated_flag = terminated
-            _, _, _, next_state, rewards, terminated = env.step(action_history[-1])
+            mean_next_state, _, _, next_state, rewards, terminated = env.step(action_history[-1])
             
             # Add necessary columns
+            next_state = next_state if sample_outputs else mean_next_state
             next_state[C_ICUSTAYID] = sample_traj_indexes
             next_state[C_BLOC] = len(state_history) + 1
             next_state[C_TIMESTEP] = (len(state_history) - 1) * 3600
@@ -228,3 +231,85 @@ def evaluate_dynamics_model_real_trajectories(eval_dataset, normer, env, num_ini
     start_indexes = np.concatenate(start_indexes)
     
     return all_sim_trajs, valid_traj_ids, start_indexes
+
+def visualize_trajectory(traj_id, 
+                         true_dataset, 
+                         normer, 
+                         sim_traj_sets, 
+                         sim_actions=None, 
+                         start_index=0, 
+                         features_of_interest=[C_HR, C_TEMP_C, C_MEANBP, C_ARTERIAL_LACTATE, C_SOFA]):
+    """
+    Creates a plot of the given patient trajectory, including both the true
+    patient state and one or more simulated patient states.
+    
+    Args:
+        traj_id: The stay ID for the trajectory to visualize
+        true_dataset: A DynamicsDataset to get the true patient values from
+        normer: A DynamicsDataNormalizer object to remove normalization from the
+            dataset
+        sim_traj_sets: A list of dataframes that contain simulated patient states
+            to visualize. Each of these dataframes will be searched for the
+            matching patient and plotted on the same graph
+        sim_actions: If provided, a list of numpy arrays specifying the actions
+            taken for each simulated trajectory. The length of the list should
+            be the same as sim_traj_sets, and each array in the list should have
+            the same number of rows as the corresponding entry in sim_traj_sets,
+            and two columns (representing IV fluids and vasopressors). If one of
+            the elements in the list is None, the actions will be assumed to be
+            the same as the true actions.
+        start_index: The index in the true trajectory at which the simulation
+            starts.
+        features_of_interest: The list of features to plot.
+    Example:
+    
+    ```
+    all_sim_trajs, valid_traj_ids, start_indexes = evaluate_dynamics_model_real_trajectories(...)
+    
+    # Choose a random index from the trajectory IDs for which simulated
+    # trajectories were generated
+    traj_idx = np.random.choice(len(valid_traj_ids))
+    visualize_trajectory(
+        valid_traj_ids[traj_idx],
+        val_dataset,
+        normer,
+        [all_sim_trajs],
+        start_index=start_indexes[traj_idx]
+    )
+    ```
+    """
+    import matplotlib.pyplot as plt
+    true_traj_mask = true_dataset.stay_ids == traj_id
+
+    true_states = normer.inverse_transform_obs(true_dataset.observations[true_traj_mask]).reset_index(drop=True)
+    true_actions = normer.inverse_transform_action(true_dataset.actions[true_traj_mask])
+    
+    sim_trajs = [sim_trajs[sim_trajs[C_ICUSTAYID] == traj_id] for sim_trajs in sim_traj_sets]
+    if sim_actions is not None:
+        sim_traj_actions = [sim_ac[sim_trajs[C_ICUSTAYID] == traj_id] if sim_ac is not None else true_actions[start_index:start_index + (sim_trajs[C_ICUSTAYID] == traj_id).sum()]
+                                for sim_ac, sim_trajs in zip(sim_actions, sim_traj_sets)]
+
+    plt.figure(figsize=(5, 10), dpi=70)
+    plt.subplot(len(features_of_interest) + 2, 1, 1)
+    plt.plot(true_actions[:,0])
+    if sim_actions is not None:
+        for action_set in sim_traj_actions:
+            plt.plot(np.arange(start_index, start_index + len(action_set)), action_set[:,0])
+    plt.title("Fluids")
+    plt.subplot(len(features_of_interest) + 2, 1, 2)
+    plt.plot(true_actions[:,1])
+    if sim_actions is not None:
+        for action_set in sim_traj_actions:
+            plt.plot(np.arange(start_index, start_index + len(action_set)), action_set[:,1])
+    plt.title("Vasopressors")
+
+    for i, feature in enumerate(features_of_interest):
+        plt.subplot(len(features_of_interest) + 2, 1, i + 3)
+        plt.plot(true_states[feature].values)
+        for sim_traj in sim_trajs:
+            plt.plot(np.arange(start_index, start_index + len(sim_traj)), sim_traj[feature].values)
+        plt.title(feature)
+    plt.xlabel("Timestep (1 hr)")
+    plt.tight_layout()
+    plt.show()
+    
