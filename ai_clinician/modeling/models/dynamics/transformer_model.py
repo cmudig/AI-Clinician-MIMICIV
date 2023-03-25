@@ -468,7 +468,7 @@ class StatePredictionModel(nn.Module):
             
             neg_log_likelihood = -distro.log_prob(next_state_vec) # + torch.abs(next_state_vec - in_state) * torch.clamp(distro.log_prob(in_state), min=-5, max=5)
             overall_loss = self.loss_fn(mu, next_state_vec) + neg_log_likelihood + self.variance_regularizer * torch.log(F.softplus(logvar)) # ** 0.5)
-            overall_loss *= timestep_weights
+            # overall_loss *= timestep_weights
             
         loss_mask = torch.logical_and(torch.arange(L)[None, :, None].to(self.device) < seq_lens[:, None, None] - self.num_steps,
                                         ~in_missing_mask)
