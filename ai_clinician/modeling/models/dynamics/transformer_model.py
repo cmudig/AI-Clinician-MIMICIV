@@ -57,7 +57,7 @@ class TransformerLatentSpaceModel(nn.Module):
         #for l in self.encoder_layers:
         #    l.weight.data.uniform_(-initrange, initrange)
 
-    def forward(self, src, src_mask):
+    def forward(self, src, src_mask, return_attention_weights=False):
         """
         Args:
             src: Tensor, shape [batch_size, seq_len, embed_dim]
@@ -69,11 +69,15 @@ class TransformerLatentSpaceModel(nn.Module):
         src = src.permute(1, 0, 2) # .reshape((-1, seq_len, src.size(2)))
         if self.positional_encoding:
             src = self.pos_encoder(src)
+        weights = []
         for l, norm in zip(self.encoder_layers, self.norm_layers):
-            transformed, _ = l(src, src, src, attn_mask=src_mask[:src.size(0),:src.size(0)])
+            transformed, wts = l(src, src, src, attn_mask=src_mask[:src.size(0),:src.size(0)])
             src = norm(transformed + src)
+            weights.append(wts)
         final_embed = src.permute(1, 0, 2)
-        return final_embed
+        if return_attention_weights:
+            return final_embed, weights
+        return final_embed 
               
 class TransformerDynamicsModel(nn.Module):
     """
@@ -144,7 +148,7 @@ class TransformerDynamicsModel(nn.Module):
         combined = torch.cat((state_embed, demog_embed), 2)
         return self.state_demog(combined)
     
-    def forward(self, state, demog, action, src_mask):
+    def forward(self, state, demog, action, src_mask, return_attention_weights=False):
         """
         Args:
             state: (N, L, S) where S is the state_dim
@@ -159,20 +163,27 @@ class TransformerDynamicsModel(nn.Module):
         initial_embed = self.encode(state, demog)
         
         # Run through the FIRST transformer
-        state_embed = self.state_transformer(initial_embed, src_mask)
+        if return_attention_weights:
+            state_embed, state_weights = self.state_transformer(initial_embed, src_mask, return_attention_weights=True)
         
-        final_embed = self.unroll_from_embedding(state_embed, action, src_mask)
+            final_embed, final_weights = self.unroll_from_embedding(state_embed, action, src_mask, return_attention_weights=True)
                 
-        return initial_embed, state_embed, final_embed
+            return initial_embed, state_embed, final_embed, [*state_weights, *final_weights]
+        else:
+            state_embed = self.state_transformer(initial_embed, src_mask)
+        
+            final_embed = self.unroll_from_embedding(state_embed, action, src_mask)
+                
+            return initial_embed, state_embed, final_embed
     
-    def unroll_from_embedding(self, state_embed, action, src_mask):
+    def unroll_from_embedding(self, state_embed, action, src_mask, return_attention_weights=False):
         """
         Produces a state-action embedding from a state-only embedding and an action.
         """
         action_embed = self.action_embedding(action)
         sa_embed = self.state_action(torch.cat((state_embed, action_embed), 2))
         
-        return self.state_action_transformer(sa_embed, src_mask)
+        return self.state_action_transformer(sa_embed, src_mask, return_attention_weights=return_attention_weights)
 
 class RNNDynamicsModel(nn.Module):
     """
@@ -927,6 +938,19 @@ class MultitaskDynamicsModel:
                                      self.consistency_offset, 
                                      final_embed.shape[2]).to(self.device)), 1)
         
+    def prepare_observations(self, obs, missing, corrupt_inputs=True):
+        masked_obs = obs
+        should_mask = torch.zeros_like(obs)
+        if corrupt_inputs:
+            if self.input_noise_scale is not None:
+                masked_obs = masked_obs + (torch.randn(masked_obs.shape) * self.input_noise_scale).to(self.device)
+            if self.mask_prob > 0.0:
+                assert self.replacement_values is not None
+                should_mask = torch.logical_or(torch.rand(*obs.shape).to(self.device) < self.mask_prob, missing)
+                masked_obs = torch.where(should_mask, torch.from_numpy(self.replacement_values).float().to(self.device), obs)
+                should_mask = should_mask.float()
+        return masked_obs, should_mask
+
     def compute_loss(self, batch, corrupt_inputs=True, return_elements=False, return_accuracies=False):
         """
         Runs the dynamics model and returns the weighted total loss over all
@@ -959,17 +983,8 @@ class MultitaskDynamicsModel:
         in_lens = in_lens.to(self.device)
         batch = (obs, dem, ac, missing, rewards, discounted_rewards, in_lens)
 
-        masked_obs = obs
-        should_mask = torch.zeros_like(obs)
-        if corrupt_inputs:
-            if self.input_noise_scale is not None:
-                masked_obs = masked_obs + (torch.randn(masked_obs.shape) * self.input_noise_scale).to(self.device)
-            if self.mask_prob > 0.0:
-                assert self.replacement_values is not None
-                should_mask = torch.logical_or(torch.rand(*obs.shape).to(self.device) < self.mask_prob, missing)
-                masked_obs = torch.where(should_mask, torch.from_numpy(self.replacement_values).float().to(self.device), obs)
-                should_mask = should_mask.float()
-
+        masked_obs, should_mask = self.prepare_observations(obs, missing, corrupt_inputs=corrupt_inputs)
+        
         if self.num_unrolling_steps > 1:
             # Run transformer multiple times and use the previous outputs as the next inputs.
             assert not self.boolean_mask_as_input
