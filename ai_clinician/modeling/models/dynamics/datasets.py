@@ -115,12 +115,12 @@ class DynamicsDataset(torch.utils.data.Dataset):
             torch.from_numpy(discounted_rewards).float()
         )
 
-    def bootstrap(self, n_trajectories=None):
+    def bootstrap(self, n_trajectories=None, indexes=None):
         """
         Creates a new DynamicsDataset that is a bootstrapped sample of this
         dataset, with optional new number of trajectories n_trajectories.
         """
-        resampled_indexes = np.random.choice(len(self.stay_id_pos), size=n_trajectories or len(self.stay_id_pos), replace=True)
+        resampled_indexes = indexes if indexes is not None else np.random.choice(len(self.stay_id_pos), size=n_trajectories or len(self.stay_id_pos), replace=True)
         sampled_stay_ids = []
         sampled_obs = []
         sampled_dem = []
@@ -134,7 +134,7 @@ class DynamicsDataset(torch.utils.data.Dataset):
             sampled_actions.append(self.actions[trajectory_indexes])
             sampled_outcomes.append(self.rewards[trajectory_indexes])
             
-        return DynamicsDataset(
+        return resampled_indexes, DynamicsDataset(
             np.concatenate(sampled_stay_ids),
             np.vstack(sampled_obs),
             np.vstack(sampled_dem),
