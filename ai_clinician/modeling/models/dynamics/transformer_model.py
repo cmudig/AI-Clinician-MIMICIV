@@ -113,11 +113,11 @@ class TransformerDynamicsModel(nn.Module):
         self.action_dim = action_dim
         self.embed_dim = embed_dim
 
-        self.state_embedding = nn.Linear(state_dim, embed_dim)
-        self.demog_embedding = nn.Linear(demog_dim, embed_dim)
-        self.state_demog = nn.Linear(embed_dim * 2, embed_dim)
-        self.action_embedding = nn.Linear(action_dim, embed_dim) # Incorporate the actions at a later layer so we have a state-only embedding
-        self.state_action = nn.Linear(embed_dim * 2, embed_dim)
+        self.state_embedding = nn.Linear(state_dim, embed_dim // 2)
+        self.demog_embedding = nn.Linear(demog_dim, embed_dim // 2)
+        # self.state_demog = nn.Linear(embed_dim * 2, embed_dim)
+        self.action_embedding = nn.Linear(action_dim, embed_dim - int(embed_dim * 0.75)) # Incorporate the actions at a later layer so we have a state-only embedding
+        self.state_compressor = nn.Linear(embed_dim, int(embed_dim * 0.75))
         self.state_transformer = TransformerLatentSpaceModel(embed_dim, nhead, nlayers, dropout, positional_encoding=positional_encoding)
         self.state_action_transformer = TransformerLatentSpaceModel(embed_dim, nhead, nlayers, dropout, positional_encoding=False)
         self.device = device
@@ -131,10 +131,10 @@ class TransformerDynamicsModel(nn.Module):
         torch.nn.init.xavier_normal_(self.state_embedding.weight.data)  # uniform_(-initrange, initrange)
         self.demog_embedding.bias.data.zero_()
         torch.nn.init.xavier_normal_(self.demog_embedding.weight.data)  # uniform_(-initrange, initrange)
-        self.state_demog.bias.data.zero_()
-        torch.nn.init.xavier_normal_(self.state_demog.weight.data)  # uniform_(-initrange, initrange)
-        self.state_action.bias.data.zero_()
-        torch.nn.init.xavier_normal_(self.state_action.weight.data)  # uniform_(-initrange, initrange)
+        self.state_compressor.bias.data.zero_()
+        torch.nn.init.xavier_normal_(self.state_compressor.weight.data)  # uniform_(-initrange, initrange)
+        # self.state_action.bias.data.zero_()
+        # torch.nn.init.xavier_normal_(self.state_action.weight.data)  # uniform_(-initrange, initrange)
         self.state_transformer.init_weights()
         self.state_action_transformer.init_weights()
 
@@ -146,7 +146,8 @@ class TransformerDynamicsModel(nn.Module):
         state_embed = F.leaky_relu(self.state_embedding(state))
         demog_embed = F.leaky_relu(self.demog_embedding(demog))
         combined = torch.cat((state_embed, demog_embed), 2)
-        return self.state_demog(combined)
+        return combined
+        # return self.state_demog(combined)
     
     def forward(self, state, demog, action, src_mask, return_attention_weights=False):
         """
@@ -180,8 +181,10 @@ class TransformerDynamicsModel(nn.Module):
         """
         Produces a state-action embedding from a state-only embedding and an action.
         """
+        s_embed = self.state_compressor(state_embed)
         action_embed = self.action_embedding(action)
-        sa_embed = self.state_action(torch.cat((state_embed, action_embed), 2))
+        # sa_embed = self.state_action(torch.cat((state_embed, action_embed), 2))
+        sa_embed = torch.cat((s_embed, action_embed), 2)
         
         return self.state_action_transformer(sa_embed, src_mask, return_attention_weights=return_attention_weights)
 
