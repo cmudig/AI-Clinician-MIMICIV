@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import tqdm
 from .transformer_model import generate_square_subsequent_mask
 from ai_clinician.preprocessing.columns import *
+from ai_clinician.preprocessing.derived_features import compute_sofa, compute_shock_index, compute_sirs
 
 class SepsisDynamicsEnvironment:
     def __init__(self, model, normer, state_decoder=None, device='cpu'):
@@ -313,3 +314,91 @@ def visualize_trajectory(traj_id,
     plt.tight_layout()
     plt.show()
     
+def compute_severity_scores(
+    traj_ids,
+    all_sim_trajs,
+    start_indexes,
+    true_dataset,
+    normer,
+    metric='sofa',
+    num_initial_steps = 24,
+    num_to_simulate = 12
+):
+    """
+    Computes a given severity score on a set of simulated trajectories compared
+    to the severity scores on true trajectories.
+    
+    Usage:
+    
+    ```
+    all_sim_trajs, valid_traj_ids, start_indexes = evaluate_dynamics_model_real_trajectories(
+        val_dataset,
+        normer,
+        env,
+        num_initial_steps=24,
+        num_to_simulate=12,
+    )
+    sim_severity_scores, true_severity_scores = compute_severity_scores(
+        valid_traj_ids,
+        all_sim_trajs,
+        start_indexes,
+        val_dataset,
+        normer,
+        metric='sofa',
+        num_initial_steps=24,
+        num_to_simulate=12
+    )
+    ```
+    
+    Args:
+        traj_ids: An array of trajectory stay ids which match the order of 
+            start_indexes and contain the trajectories in all_sim_trajs
+        all_sim_trajs: Dataframe of simulated patient state values
+        start_indexes: Array of indexes at which each trajectory was simulated
+            to start (outputs from evaluate_dynamics_model_real_trajectories)
+        true_dataset: A DynamicsDataset instance containing the true values for
+            the trajectories simulated
+        normer: A DynamicsDataNormalizer instance
+        metric: The severity score to calculate. Supported values are 'sofa', 
+            'sirs', 'shock_index'
+        num_initial_steps: The number of context timesteps passed to the model.
+            This MUST match the value input to evaluate_dynamics_model_real_trajectories
+        num_to_simulate: The number of simulated timesteps for each trajectory.
+            This MUST match the value input to evaluate_dynamics_model_real_trajectories
+            
+    Returns:
+        Tuple (sim_scores, true_scores), where sim_scores is the array of severity
+        scores for the simulated trajectories, while true_scores is the array of
+        severity scores for the true trajectories.
+    """
+    def last_timestep(g):
+        return g == min(len(g), num_initial_steps + num_to_simulate)
+    
+    last_sim_timesteps = all_sim_trajs[all_sim_trajs[C_BLOC].groupby(all_sim_trajs[C_ICUSTAYID]).transform(last_timestep)].copy().reset_index(drop=True)
+    last_sim_timesteps[C_OUTPUT_STEP] = last_sim_timesteps["norm_output_step"] * last_sim_timesteps[C_WEIGHT]
+    
+    val_obs = normer.inverse_transform_obs(true_dataset.observations)
+    val_obs[C_ICUSTAYID] = true_dataset.stay_ids
+    val_obs = pd.merge(all_sim_trajs[[C_ICUSTAYID]].drop_duplicates(), val_obs, how='left', on=C_ICUSTAYID)
+
+    val_obs[C_BLOC] = val_obs[C_ICUSTAYID].groupby(val_obs[C_ICUSTAYID]).transform(lambda g: np.arange(1, len(g) + 1))
+    val_obs = pd.merge(val_obs, pd.DataFrame({C_ICUSTAYID: traj_ids, 'start': start_indexes}),
+                    how='left', on=C_ICUSTAYID)
+    val_obs = val_obs[val_obs[C_BLOC] - 1 >= val_obs['start']]
+
+    def last_timestep_true(g):
+        return g == min(g.max(), g.min() + num_initial_steps + num_to_simulate)
+
+    last_true_timesteps = val_obs[val_obs[C_BLOC].groupby(val_obs[C_ICUSTAYID]).transform(last_timestep_true)].copy().reset_index(drop=True)
+    last_true_timesteps[C_OUTPUT_STEP] = last_true_timesteps["norm_output_step"] * last_true_timesteps[C_WEIGHT]    
+    if metric == 'sofa':
+        true_severity_scores = compute_sofa(last_true_timesteps, timestep_resolution=1.0)
+        sim_severity_scores = compute_sofa(last_sim_timesteps, timestep_resolution=1.0)
+    elif metric == 'sirs':
+        true_severity_scores = compute_sirs(last_true_timesteps)
+        sim_severity_scores = compute_sirs(last_sim_timesteps)
+    elif metric == 'shock_index':
+        true_severity_scores = compute_shock_index(last_true_timesteps)
+        sim_severity_scores = compute_shock_index(last_sim_timesteps)
+        
+    return sim_severity_scores, true_severity_scores
