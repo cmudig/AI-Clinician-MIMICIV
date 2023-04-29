@@ -31,6 +31,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
+from sklearn.utils import class_weight
 
 # Simple full-connected supervised network for Behavior Cloning of batch data
 class FC_BC(nn.Module):
@@ -130,6 +131,13 @@ class BehaviorCloning(object):
 
         self.iterations = 0
 
+    def change_loss_function(self, actions, num_actions=25):
+        class_weights=class_weight.compute_class_weight(class_weight='balanced',classes=np.arange(num_actions),y=actions)
+        class_weights=torch.tensor(class_weights,dtype=torch.float).to(self.device)
+        print(class_weights)
+        criterion = nn.CrossEntropyLoss(weight=class_weights) #,reduction='mean')
+        self.loss_func = criterion
+
     def train_epoch(self, train_dataloader):
         '''Sample batches of data from training dataloader, predict actions using the network,
         Update the parameters of the network using CrossEntropyLoss.'''
@@ -185,7 +193,7 @@ class BehaviorCloning(object):
                 total_count += state.shape[0]
                 if i % 100 == 0:
                     bar.set_description(f"val loss: {total_loss / (i + 1):.6f} Acc: {correct_count / total_count:.4f}")
-        return total_loss / i, correct_count / total_count
+        return total_loss / (i + 1), correct_count / total_count
 
     def predict(self, states):
         ds = TensorDataset(states)
