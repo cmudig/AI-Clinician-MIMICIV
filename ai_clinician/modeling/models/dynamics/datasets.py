@@ -24,6 +24,8 @@ class DynamicsDataset(torch.utils.data.Dataset):
                  replacement_values=None,
                  obs_transform=None,
                  demog_transform=None, 
+                 num_action_steps=1,
+                 suppress_actions=False,
                  gamma=0.95,
                  mask_prob=0.0):
         """
@@ -36,6 +38,7 @@ class DynamicsDataset(torch.utils.data.Dataset):
             observations and return a transformed version as well as a missingness
             mask.
         demog_transform: Same as obs_transform but for demographics.
+        num_action_steps: the number of subsequent actions to pass as input to the model
         """
         assert len(stay_ids) == len(observations) == len(demographics) == len(actions) == len(rewards)
         self.observations = observations
@@ -48,6 +51,8 @@ class DynamicsDataset(torch.utils.data.Dataset):
         self.replacement_values = replacement_values
         self.obs_transform = obs_transform
         self.demog_transform = demog_transform
+        self.num_action_steps = num_action_steps
+        self.suppress_actions = suppress_actions
         
         self.stay_id_pos = []
         last_stay_id = None
@@ -90,6 +95,17 @@ class DynamicsDataset(torch.utils.data.Dataset):
         
         if self.demog_transform is not None:
             demographics, _ = self.demog_transform(demographics)
+            
+        # Concatenate actions
+        if self.num_action_steps > 1:
+            new_actions = None
+            for i in range(self.num_action_steps):
+                if new_actions is None: new_actions = actions
+                elif i >= actions.shape[0]: new_actions = np.hstack([new_actions, np.zeros(actions.shape)])
+                else: new_actions = np.hstack([new_actions, np.concatenate([actions[i:,:], np.zeros((i, actions.shape[1]))])])
+            actions = new_actions
+        if self.suppress_actions:
+            actions = np.zeros(actions.shape)
             
         # Mask if needed
         input_obs = observations

@@ -530,7 +530,7 @@ class ValuePredictionModel(nn.Module):
     L = sequence length
     E = embedding dimension
     """
-    def __init__(self, embed_dim, predict_rewards=False, hidden_dim=16, dropout=0.1, batch_norm=False, predict_variance=False, variance_regularizer=10.0, device='cpu'):
+    def __init__(self, embed_dim, predict_rewards=False, num_steps=0, current_difference=False, hidden_dim=16, dropout=0.1, batch_norm=False, predict_variance=False, variance_regularizer=10.0, device='cpu'):
         super().__init__()
         self.embed_dim = embed_dim
         self.net = FullyConnected2Layer(embed_dim, hidden_dim, 2 if predict_variance else 1, dropout=dropout, batch_norm=batch_norm)
@@ -538,6 +538,8 @@ class ValuePredictionModel(nn.Module):
         self.predict_variance = predict_variance
         self.variance_regularizer = variance_regularizer
         self.loss_fn = nn.MSELoss(reduction='none')
+        self.num_steps = num_steps
+        self.current_difference = current_difference
         self.device = device
         
     def forward(self, embedding):
@@ -557,14 +559,22 @@ class ValuePredictionModel(nn.Module):
         """
         obs, _, _, _, rewards, values, seq_lens = in_batch
         L = obs.shape[1]
+        targets = rewards if self.predict_rewards else values
+        if self.num_steps > 0:
+            new_targets = torch.cat((targets[:,self.num_steps:,:].clone(), torch.zeros(targets.shape[0], self.num_steps, targets.shape[2]).to(self.device)), 1)
+            if self.current_difference:
+                targets = new_targets - targets
+            else:
+                targets = new_targets
+
         if self.predict_variance:
             _, logvar, distro = model_outputs            
-            neg_log_likelihood = -distro.log_prob(rewards if self.predict_rewards else values)
+            neg_log_likelihood = -distro.log_prob(targets)
             loss = (neg_log_likelihood + self.variance_regularizer * torch.log(F.softplus(logvar))).squeeze(2) # ** 0.5)
         else:
-            loss = self.loss_fn(model_outputs, rewards if self.predict_rewards else values).sum(2)
+            loss = self.loss_fn(model_outputs, targets).sum(2)
         
-        loss_mask = torch.arange(L).to(self.device)[None, :] < seq_lens[:, None]
+        loss_mask = torch.arange(L).to(self.device)[None, :] < (seq_lens[:, None] - self.num_steps)
 
         loss_masked = loss.where(loss_mask, torch.tensor(0.0).to(self.device))
         return loss_masked.sum() / loss_mask.sum()
@@ -772,6 +782,7 @@ class MultitaskDynamicsModel:
     def __init__(self,
                  obs_size,
                  dem_size,
+                 action_dim=2,
                  embed_size=512,
                  nlayers=3,
                  nhead=4,
@@ -818,7 +829,7 @@ class MultitaskDynamicsModel:
             self.model = TransformerDynamicsModel(
                 obs_size * 2 if boolean_mask_as_input else obs_size, 
                 dem_size,
-                2, 
+                action_dim, 
                 embed_size, 
                 nhead, 
                 nlayers, 
@@ -829,7 +840,7 @@ class MultitaskDynamicsModel:
             self.model = RNNDynamicsModel(
                 obs_size * 2 if boolean_mask_as_input else obs_size, 
                 dem_size,
-                2, 
+                action_dim, 
                 embed_size,
                 num_lstm_layers=nlayers,
                 dropout=dropout,
@@ -839,7 +850,7 @@ class MultitaskDynamicsModel:
             self.model = LinearDynamicsModel(
                 obs_size * 2 if boolean_mask_as_input else obs_size, 
                 dem_size,
-                2, 
+                action_dim, 
                 embed_size,
                 num_layers=nlayers,
                 dropout=dropout,
